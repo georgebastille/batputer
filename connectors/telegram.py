@@ -1,10 +1,21 @@
 import logging
+import re
 from typing import Awaitable, Callable
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_markdown(text: str) -> str:
+    text = re.sub(r'\|\|(.*?)\|\|', r'\1', text)          # ||spoiler||
+    text = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', text)    # ***bold italic*** / **bold** / *italic*
+    text = re.sub(r'_{1,3}(.*?)_{1,3}', r'\1', text)       # __underline__ / _italic_
+    text = re.sub(r'~~(.*?)~~', r'\1', text)               # ~~strikethrough~~
+    text = re.sub(r'`{1,3}(.*?)`{1,3}', r'\1', text, flags=re.DOTALL)  # `code` / ```block```
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)          # # headers
+    return text
 
 
 class TelegramConnector:
@@ -33,7 +44,7 @@ class TelegramConnector:
         try:
             await self.send_typing(chat_id)
             reply = await self._message_handler(chat_id, update.message.text)
-            await self.send_message(chat_id, reply)
+            await self.send_message(chat_id, _strip_markdown(reply))
         except RuntimeError as e:
             await self.send_message(chat_id, str(e))
         except Exception:

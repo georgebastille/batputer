@@ -83,6 +83,7 @@ class BatPuter:
             "content": (
                 "You are a helpful personal assistant named BatPuter. "
                 "You have access to tools including web search. "
+                "Always respond in plain text with no markdown formatting — no **, __, ||, #, or backticks. "
                 f"The current date and time is {now.strftime('%A, %-d %B %Y at %H:%M')} (London, UK)."
             ),
         }
