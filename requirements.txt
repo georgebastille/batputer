@@ -1,7 +1,9 @@
-python-telegram-bot
+python-telegram-bot[job-queue]
 python-dotenv
 openai
-google-auth-oauthlib 
+google-auth-oauthlib
 google-api-python-client
 ddgs
 trafilatura
+pytest
+pytest-asyncio
