@@ -1,13 +1,14 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+from connectors.gmail import GmailClient
 from persistence.store import ConversationStore
 from tasks.gmail_monitor import GmailMonitorTask
 
 
-def _make_task(gmail_service, openai_client, connector, store):
+def _make_task(gmail_client, openai_client, connector, store):
     return GmailMonitorTask(
-        gmail_service=gmail_service,
+        gmail_client=gmail_client,
         openai_client=openai_client,
         model="test-model",
         connector=connector,
@@ -16,7 +17,7 @@ def _make_task(gmail_service, openai_client, connector, store):
     )
 
 
-def _gmail_returning(emails: list):
+def _gmail_client_returning(emails: list):
     svc = MagicMock()
     msgs = [{"id": e["id"]} for e in emails]
     svc.users().messages().list().execute.return_value = {"messages": msgs}
@@ -37,7 +38,13 @@ def _gmail_returning(emails: list):
         return call
 
     svc.users().messages().get.side_effect = get_detail
-    return svc
+    return GmailClient(svc)
+
+
+def _gmail_client_failing():
+    svc = MagicMock()
+    svc.users().messages().list().execute.side_effect = Exception("network error")
+    return GmailClient(svc)
 
 
 def _openai_returning(text: str):
@@ -56,7 +63,7 @@ def test_new_emails_trigger_alert():
     connector.send_message = AsyncMock()
     client = _openai_returning("2 emails need attention: reply to Alice, approve invoice.")
 
-    task = _make_task(_gmail_returning(emails), client, connector, store)
+    task = _make_task(_gmail_client_returning(emails), client, connector, store)
     asyncio.run(task.run(None))
 
     connector.send_message.assert_called_once()
@@ -73,21 +80,19 @@ def test_no_new_emails_no_alert():
     connector.send_message = AsyncMock()
     client = _openai_returning("irrelevant")
 
-    task = _make_task(_gmail_returning(emails), client, connector, store)
+    task = _make_task(_gmail_client_returning(emails), client, connector, store)
     asyncio.run(task.run(None))
 
     connector.send_message.assert_not_called()
 
 
 def test_gmail_failure_no_crash():
-    svc = MagicMock()
-    svc.users().messages().list().execute.side_effect = Exception("network error")
     store = ConversationStore(":memory:")
     connector = MagicMock()
     connector.send_message = AsyncMock()
     client = _openai_returning("irrelevant")
 
-    task = _make_task(svc, client, connector, store)
+    task = _make_task(_gmail_client_failing(), client, connector, store)
     asyncio.run(task.run(None))
 
     connector.send_message.assert_not_called()
@@ -100,7 +105,7 @@ def test_no_action_needed_no_alert():
     connector.send_message = AsyncMock()
     client = _openai_returning("No action needed.")
 
-    task = _make_task(_gmail_returning(emails), client, connector, store)
+    task = _make_task(_gmail_client_returning(emails), client, connector, store)
     asyncio.run(task.run(None))
 
     connector.send_message.assert_not_called()

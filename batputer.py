@@ -5,6 +5,7 @@ import sys
 from dotenv import load_dotenv
 from openai import OpenAI
 
+import tools.gmail_search
 import tools.web_search
 from agent import BatPuter
 from connectors.telegram import TelegramConnector
@@ -35,20 +36,12 @@ def _build_openai_client() -> OpenAI:
     return client
 
 
-def _build_gmail_task(client, connector, store, chat_id):
+def _build_gmail_client():
     try:
-        from tasks.gmail_monitor import GmailMonitorTask, get_gmail_service
-        gmail_service = get_gmail_service()
-        return GmailMonitorTask(
-            gmail_service=gmail_service,
-            openai_client=client,
-            model=MODEL,
-            connector=connector,
-            store=store,
-            chat_id=chat_id,
-        )
+        from connectors.gmail import GmailClient, get_gmail_service
+        return GmailClient(get_gmail_service())
     except Exception as e:
-        logger.warning("Gmail not available (%s) — email monitoring disabled", e)
+        logger.warning("Gmail not available (%s) — email features disabled", e)
         return None
 
 
@@ -64,8 +57,19 @@ if __name__ == "__main__":
     agent = BatPuter(client, MODEL, store)
     connector = TelegramConnector(token=TELEGRAM_TOKEN, message_handler=agent.process_message)
 
-    gmail_task = _build_gmail_task(client, connector, store, TELEGRAM_CHAT_ID)
-    if gmail_task:
+    gmail_client = _build_gmail_client()
+    if gmail_client:
+        tools.gmail_search.configure(gmail_client)
+
+        from tasks.gmail_monitor import GmailMonitorTask
+        gmail_task = GmailMonitorTask(
+            gmail_client=gmail_client,
+            openai_client=client,
+            model=MODEL,
+            connector=connector,
+            store=store,
+            chat_id=TELEGRAM_CHAT_ID,
+        )
         connector.app.job_queue.run_repeating(
             gmail_task.run, interval=GMAIL_CHECK_INTERVAL, first=30
         )

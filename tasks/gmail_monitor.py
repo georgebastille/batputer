@@ -2,6 +2,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from connectors.gmail import GmailClient
     from connectors.telegram import TelegramConnector
     from persistence.store import ConversationStore
 
@@ -16,39 +17,17 @@ _TRIAGE_SYSTEM = (
 )
 
 
-def get_gmail_service():
-    import os
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build
-
-    SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-    creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open("token.json", "w") as f:
-            f.write(creds.to_json())
-    return build("gmail", "v1", credentials=creds)
-
-
 class GmailMonitorTask:
     def __init__(
         self,
-        gmail_service,
+        gmail_client: "GmailClient",
         openai_client,
         model: str,
         connector: "TelegramConnector",
         store: "ConversationStore",
         chat_id: int,
     ):
-        self._gmail = gmail_service
+        self._gmail = gmail_client
         self._client = openai_client
         self._model = model
         self._connector = connector
@@ -57,7 +36,7 @@ class GmailMonitorTask:
 
     async def run(self, context) -> None:
         try:
-            emails = self._get_unread_emails()
+            emails = self._gmail.get_unread()
         except Exception:
             logger.exception("Gmail fetch failed")
             return
@@ -81,33 +60,6 @@ class GmailMonitorTask:
         self._store.save_message(
             self._chat_id, {"role": "assistant", "content": f"[{alert}]"}
         )
-
-    def _get_unread_emails(self) -> list[dict]:
-        result = (
-            self._gmail.users()
-            .messages()
-            .list(userId="me", labelIds=["UNREAD"], maxResults=20)
-            .execute()
-        )
-        messages = result.get("messages", [])
-        emails = []
-        for msg in messages:
-            detail = (
-                self._gmail.users()
-                .messages()
-                .get(userId="me", id=msg["id"], format="metadata",
-                     metadataHeaders=["Subject", "From", "Date"])
-                .execute()
-            )
-            headers = {h["name"]: h["value"] for h in detail["payload"]["headers"]}
-            emails.append({
-                "id": msg["id"],
-                "subject": headers.get("Subject", "(no subject)"),
-                "from": headers.get("From", ""),
-                "date": headers.get("Date", ""),
-                "snippet": detail.get("snippet", ""),
-            })
-        return emails
 
     def _triage(self, emails: list[dict]) -> str:
         email_list = "\n".join(
