@@ -56,8 +56,16 @@ def _make_update(text="hello"):
     return update
 
 
+def _make_photo_update(caption=""):
+    update = MagicMock()
+    update.effective_chat.id = 1
+    update.message.caption = caption
+    update.message.photo = [MagicMock(file_id="small"), MagicMock(file_id="large")]
+    return update
+
+
 def test_on_message_status_then_result():
-    async def handler(chat_id, text):
+    async def handler(chat_id, text, image_data_url=None):
         yield Status("a")
         yield Status("b")
         yield Result("done")
@@ -72,7 +80,7 @@ def test_on_message_status_then_result():
 
 
 def test_on_message_no_status_for_plain_reply():
-    async def handler(chat_id, text):
+    async def handler(chat_id, text, image_data_url=None):
         yield Result("just a reply")
 
     connector = _make_connector(handler)
@@ -84,8 +92,30 @@ def test_on_message_no_status_for_plain_reply():
     bot.delete_message.assert_not_called()
 
 
+def test_on_photo_passes_image_data_url_and_caption():
+    received = {}
+
+    async def handler(chat_id, text, image_data_url=None):
+        received["text"] = text
+        received["image_data_url"] = image_data_url
+        yield Result("I see a cat")
+
+    connector = _make_connector(handler)
+    context = MagicMock()
+    fake_file = MagicMock()
+    fake_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake-image-bytes"))
+    context.bot.get_file = AsyncMock(return_value=fake_file)
+
+    asyncio.run(connector._on_photo(_make_photo_update(caption="what is this?"), context))
+
+    context.bot.get_file.assert_called_once_with("large")
+    assert received["text"] == "what is this?"
+    assert received["image_data_url"].startswith("data:image/jpeg;base64,")
+    connector._app.bot.send_message.assert_called_once_with(chat_id=1, text="I see a cat")
+
+
 def test_on_message_runtime_error_clears_status():
-    async def handler(chat_id, text):
+    async def handler(chat_id, text, image_data_url=None):
         yield Status("working...")
         raise RuntimeError("Cannot reach the local LLM. Is LM Studio running?")
 

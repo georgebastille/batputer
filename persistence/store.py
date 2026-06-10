@@ -25,6 +25,12 @@ class ConversationStore:
                 email_id TEXT PRIMARY KEY,
                 seen_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );
+            CREATE TABLE IF NOT EXISTS food_notes (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id    INTEGER NOT NULL,
+                note       TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
         """)
         self._conn.commit()
 
@@ -100,6 +106,20 @@ class ConversationStore:
             )
         }
         return [eid for eid in email_ids if eid not in seen]
+
+    def add_food_note(self, chat_id: int, note: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO food_notes (chat_id, note) VALUES (?, ?)",
+                (chat_id, note),
+            )
+
+    def get_food_notes(self, chat_id: int, limit: int = 30) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT note FROM food_notes WHERE chat_id=? ORDER BY id DESC LIMIT ?",
+            (chat_id, limit),
+        ).fetchall()
+        return [row["note"] for row in reversed(rows)]
 
     def _next_seq(self, chat_id: int) -> int:
         row = self._conn.execute(

@@ -46,3 +46,24 @@ def test_seen_emails():
     unseen = store.filter_unseen(["id1", "id4", "id5"])
     assert set(unseen) == {"id4", "id5"}
     assert store.filter_unseen([]) == []
+
+
+def test_food_notes_roundtrip_and_ordering():
+    store = _make_store()
+    assert store.get_food_notes(1) == []
+
+    store.add_food_note(1, "note 1")
+    store.add_food_note(1, "note 2")
+    store.add_food_note(2, "other chat note")
+
+    assert store.get_food_notes(1) == ["note 1", "note 2"]
+    assert store.get_food_notes(2) == ["other chat note"]
+
+
+def test_food_notes_limit():
+    store = _make_store()
+    for i in range(5):
+        store.add_food_note(1, f"note {i}")
+
+    notes = store.get_food_notes(1, limit=3)
+    assert notes == ["note 2", "note 3", "note 4"]

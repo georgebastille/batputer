@@ -23,22 +23,32 @@ class BatPuter:
         self._model = model
         self._store = store
 
-    async def process_message(self, chat_id: int, text: str) -> AsyncIterator[Status | Result]:
+    async def process_message(
+        self, chat_id: int, text: str, image_data_url: str | None = None
+    ) -> AsyncIterator[Status | Result]:
         try:
-            async for item in self._run(chat_id, text):
+            async for item in self._run(chat_id, text, image_data_url):
                 yield item
         except openai.APIConnectionError:
             raise RuntimeError("Cannot reach the local LLM. Is LM Studio running?")
         except openai.APIStatusError as e:
             raise RuntimeError(f"LLM error {e.status_code}")
 
-    async def _run(self, chat_id: int, text: str) -> AsyncIterator[Status | Result]:
+    async def _run(
+        self, chat_id: int, text: str, image_data_url: str | None = None
+    ) -> AsyncIterator[Status | Result]:
         messages = self._load_context(chat_id)
         messages.append({"role": "user", "content": text})
         self._store.save_message(chat_id, messages[-1])
 
-        for _ in range(self.MAX_TOOL_ITERATIONS):
-            text_reply, tool_calls = self._chat_with_tools(messages)
+        if image_data_url is not None:
+            yield Status("Looking at the image...")
+
+        for i in range(self.MAX_TOOL_ITERATIONS):
+            llm_messages = messages
+            if image_data_url is not None and i == 0:
+                llm_messages = messages[:-1] + [_user_message_with_image(text, image_data_url)]
+            text_reply, tool_calls = self._chat_with_tools(llm_messages)
             if tool_calls:
                 tool_calls_data = [
                     {
@@ -79,20 +89,28 @@ class BatPuter:
     def _load_context(self, chat_id: int) -> list[dict]:
         messages = self._store.load(chat_id)
         if not messages or messages[0]["role"] != "system":
-            messages.insert(0, self._make_system_prompt())
+            messages.insert(0, self._make_system_prompt(chat_id))
         return messages
 
-    def _make_system_prompt(self) -> dict:
+    def _make_system_prompt(self, chat_id: int) -> dict:
         now = datetime.datetime.now(LONDON_TZ)
-        return {
-            "role": "system",
-            "content": (
-                "You are a helpful personal assistant named BatPuter. "
-                "You have access to tools including web search. "
-                "Always respond in plain text with no markdown formatting — no **, __, ||, #, or backticks. "
-                f"The current date and time is {now.strftime('%A, %-d %B %Y at %H:%M')} (London, UK)."
-            ),
-        }
+        content = (
+            "You are a helpful personal assistant named BatPuter. "
+            "You have access to tools including web search. "
+            "The user can send you images; describe and answer questions about them, "
+            "but note that images are not retained in conversation history. "
+            "Always respond in plain text with no markdown formatting — no **, __, ||, #, or backticks. "
+            f"The current date and time is {now.strftime('%A, %-d %B %Y at %H:%M')} (London, UK). "
+            "When the user shares a photo of food or ingredients and asks for recipes, "
+            "suggest recipes considering any food notes below. "
+            "When the user gives feedback on a dish or recipe (what worked, what didn't), "
+            "call remember_food_note to save it."
+        )
+        notes = self._store.get_food_notes(chat_id)
+        if notes:
+            content += "\n\nFood notes from previous conversations (use these to inform recipe suggestions and avoid repeating past mistakes):\n"
+            content += "\n".join(f"- {note}" for note in notes)
+        return {"role": "system", "content": content}
 
     def _chat_with_tools(self, messages: list) -> tuple:
         response = self._client.chat.completions.create(
@@ -138,7 +156,8 @@ class BatPuter:
                 "role": "system",
                 "content": (
                     "Summarise this conversation history concisely. "
-                    "Preserve key facts, decisions, and anything the user shared about themselves."
+                    "Preserve key facts, decisions, and anything the user shared about themselves. "
+                    "Preserve any recipes or dishes that were suggested and what they were suggested in response to."
                 ),
             },
             {
@@ -158,3 +177,13 @@ class BatPuter:
             extra_body={"thinking": {"type": "disabled"}},
         )
         return response.choices[0].message.content
+
+
+def _user_message_with_image(text: str, image_data_url: str) -> dict:
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+        ],
+    }

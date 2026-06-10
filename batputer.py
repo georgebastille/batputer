@@ -8,6 +8,7 @@ import urllib.request
 from dotenv import load_dotenv
 from openai import OpenAI
 
+import tools.food_notes
 import tools.gmail_search
 import tools.web_search
 from agent import BatPuter
@@ -79,6 +80,7 @@ if __name__ == "__main__":
 
     store = ConversationStore(os.getenv("BATPUTER_DB_PATH", "batputer.db"))
     agent = BatPuter(client, MODEL, store)
+    tools.food_notes.configure(store, TELEGRAM_CHAT_ID)
 
     context_window = _detect_context_window(MODEL)
     if context_window:

@@ -102,7 +102,7 @@ def test_compaction_yields_status():
     agent = BatPuter(client, "test-model", store)
     agent.CONTEXT_TOKEN_BUDGET = 0  # force compaction
 
-    store.replace_all(1, [agent._make_system_prompt()] + [
+    store.replace_all(1, [agent._make_system_prompt(1)] + [
         {"role": "user", "content": f"message {i}"} for i in range(8)
     ])
 
@@ -111,3 +111,23 @@ def test_compaction_yields_status():
     statuses = [i.text for i in items if isinstance(i, Status)]
     assert "Compacting conversation history..." in statuses
     assert items[-1] == Result("Reply")
+
+
+def test_system_prompt_includes_food_notes_when_present():
+    client = _mock_client_sequence("Reply")
+    store = ConversationStore(":memory:")
+    store.add_food_note(1, "Garlic shrimp pasta: too salty, use less soy sauce")
+    agent = BatPuter(client, "test-model", store)
+
+    prompt = agent._make_system_prompt(1)
+    assert "Garlic shrimp pasta: too salty, use less soy sauce" in prompt["content"]
+    assert "Food notes from previous conversations" in prompt["content"]
+
+
+def test_system_prompt_omits_food_notes_when_empty():
+    client = _mock_client_sequence("Reply")
+    store = ConversationStore(":memory:")
+    agent = BatPuter(client, "test-model", store)
+
+    prompt = agent._make_system_prompt(1)
+    assert "Food notes from previous conversations" not in prompt["content"]

@@ -1,6 +1,7 @@
+import base64
 import logging
 import re
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator, Callable, Optional
 
 import telegram
 from telegram import Update
@@ -49,7 +50,11 @@ class _StatusReporter:
 
 
 class TelegramConnector:
-    def __init__(self, token: str, message_handler: Callable[[int, str], AsyncIterator[Status | Result]]):
+    def __init__(
+        self,
+        token: str,
+        message_handler: Callable[[int, str, Optional[str]], AsyncIterator[Status | Result]],
+    ):
         self._app = ApplicationBuilder().token(token).build()
         self._message_handler = message_handler
 
@@ -57,6 +62,7 @@ class TelegramConnector:
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
         )
+        self._app.add_handler(MessageHandler(filters.PHOTO, self._on_photo))
         self._app.run_polling()
 
     @property
@@ -70,11 +76,21 @@ class TelegramConnector:
         await self._app.bot.send_chat_action(chat_id=chat_id, action="typing")
 
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await self._handle(update, update.message.text)
+
+    async def _on_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        photo = update.message.photo[-1]  # largest available size
+        file = await context.bot.get_file(photo.file_id)
+        image_bytes = bytes(await file.download_as_bytearray())
+        image_data_url = f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode()}"
+        await self._handle(update, update.message.caption or "", image_data_url)
+
+    async def _handle(self, update: Update, text: str, image_data_url: Optional[str] = None) -> None:
         chat_id = update.effective_chat.id
         status = _StatusReporter(self._app.bot, chat_id)
         try:
             await self.send_typing(chat_id)
-            async for item in self._message_handler(chat_id, update.message.text):
+            async for item in self._message_handler(chat_id, text, image_data_url):
                 if isinstance(item, Result):
                     await status.clear()
                     await self.send_message(chat_id, _strip_markdown(item.text))
