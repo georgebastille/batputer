@@ -133,23 +133,3 @@ def test_system_prompt_omits_profile_memories_when_empty():
     assert "What you know about the user and their family" not in prompt["content"]
 
 
-def test_sender_name_prefixes_stored_message():
-    client = _mock_client_sequence("Reply")
-    store = ConversationStore(":memory:")
-    agent = BatPuter(client, "test-model", store)
-    asyncio.run(_collect(agent.process_message(1, "I love pizza", sender_name="Mia")))
-
-    history = store.load(1)
-    user_messages = [m["content"] for m in history if m["role"] == "user"]
-    assert user_messages == ["[Mia]: I love pizza"]
-
-
-def test_no_sender_name_stores_plain_text():
-    client = _mock_client_sequence("Reply")
-    store = ConversationStore(":memory:")
-    agent = BatPuter(client, "test-model", store)
-    asyncio.run(_collect(agent.process_message(1, "I love pizza")))
-
-    history = store.load(1)
-    user_messages = [m["content"] for m in history if m["role"] == "user"]
-    assert user_messages == ["I love pizza"]

@@ -95,7 +95,6 @@ if __name__ == "__main__":
     connector = TelegramConnector(
         token=TELEGRAM_TOKEN,
         message_handler=agent.process_message,
-        primary_user_name=os.getenv("BATPUTER_USER_NAME"),
     )
 
     gmail_client = _build_gmail_client()

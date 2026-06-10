@@ -24,10 +24,10 @@ class BatPuter:
         self._store = store
 
     async def process_message(
-        self, chat_id: int, text: str, image_data_url: str | None = None, sender_name: str | None = None
+        self, chat_id: int, text: str, image_data_url: str | None = None
     ) -> AsyncIterator[Status | Result]:
         try:
-            async for item in self._run(chat_id, text, image_data_url, sender_name):
+            async for item in self._run(chat_id, text, image_data_url):
                 yield item
         except openai.APIConnectionError:
             raise RuntimeError("Cannot reach the local LLM. Is LM Studio running?")
@@ -35,11 +35,9 @@ class BatPuter:
             raise RuntimeError(f"LLM error {e.status_code}")
 
     async def _run(
-        self, chat_id: int, text: str, image_data_url: str | None = None, sender_name: str | None = None
+        self, chat_id: int, text: str, image_data_url: str | None = None
     ) -> AsyncIterator[Status | Result]:
         messages = self._load_context(chat_id)
-        if sender_name is not None:
-            text = f"[{sender_name}]: {text}"
         messages.append({"role": "user", "content": text})
         self._store.save_message(chat_id, messages[-1])
 

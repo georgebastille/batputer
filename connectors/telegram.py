@@ -53,12 +53,10 @@ class TelegramConnector:
     def __init__(
         self,
         token: str,
-        message_handler: Callable[[int, str, Optional[str], Optional[str]], AsyncIterator[Status | Result]],
-        primary_user_name: Optional[str] = None,
+        message_handler: Callable[[int, str, Optional[str]], AsyncIterator[Status | Result]],
     ):
         self._app = ApplicationBuilder().token(token).build()
         self._message_handler = message_handler
-        self._primary_user_name = primary_user_name
 
     def run(self) -> None:
         self._app.add_handler(
@@ -89,17 +87,10 @@ class TelegramConnector:
 
     async def _handle(self, update: Update, text: str, image_data_url: Optional[str] = None) -> None:
         chat_id = update.effective_chat.id
-        sender_name = update.effective_user.first_name if update.effective_user else None
-        if (
-            sender_name is not None
-            and self._primary_user_name is not None
-            and sender_name.casefold() == self._primary_user_name.casefold()
-        ):
-            sender_name = None
         status = _StatusReporter(self._app.bot, chat_id)
         try:
             await self.send_typing(chat_id)
-            async for item in self._message_handler(chat_id, text, image_data_url, sender_name):
+            async for item in self._message_handler(chat_id, text, image_data_url):
                 if isinstance(item, Result):
                     await status.clear()
                     await self.send_message(chat_id, _strip_markdown(item.text))
