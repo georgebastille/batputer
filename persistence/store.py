@@ -1,6 +1,13 @@
 import json
 import sqlite3
 
+_STOPWORDS = {
+    "about", "after", "again", "against", "before", "could", "doing",
+    "during", "have", "into", "should", "their", "them", "there", "these",
+    "they", "this", "those", "what", "when", "where", "which", "while",
+    "with", "would", "your",
+}
+
 
 class ConversationStore:
     def __init__(self, db_path: str):
@@ -33,20 +40,7 @@ class ConversationStore:
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
         """)
-        self._migrate_food_notes()
         self._conn.commit()
-
-    def _migrate_food_notes(self) -> None:
-        exists = self._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='food_notes'"
-        ).fetchone()
-        if not exists:
-            return
-        self._conn.execute(
-            "INSERT INTO memories (chat_id, category, content, created_at) "
-            "SELECT chat_id, 'general', note, created_at FROM food_notes"
-        )
-        self._conn.execute("DROP TABLE food_notes")
 
     def load(self, chat_id: int) -> list[dict]:
         rows = self._conn.execute(
@@ -137,7 +131,7 @@ class ConversationStore:
         return [row["content"] for row in reversed(rows)]
 
     def search_memories(self, chat_id: int, query: str, limit: int = 5) -> list[str]:
-        keywords = query.split()
+        keywords = [kw for kw in query.split() if len(kw) > 3 and kw.lower() not in _STOPWORDS]
         if not keywords:
             return []
         conditions = " OR ".join("content LIKE ?" for _ in keywords)

@@ -90,7 +90,11 @@ class TelegramConnector:
     async def _handle(self, update: Update, text: str, image_data_url: Optional[str] = None) -> None:
         chat_id = update.effective_chat.id
         sender_name = update.effective_user.first_name if update.effective_user else None
-        if sender_name is not None and sender_name == self._primary_user_name:
+        if (
+            sender_name is not None
+            and self._primary_user_name is not None
+            and sender_name.casefold() == self._primary_user_name.casefold()
+        ):
             sender_name = None
         status = _StatusReporter(self._app.bot, chat_id)
         try:

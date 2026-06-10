@@ -105,10 +105,9 @@ class BatPuter:
             f"The current date and time is {now.strftime('%A, %-d %B %Y at %H:%M')} (London, UK). "
             "Use remember to save important new facts about the user or their family — "
             "set profile=True for stable core facts (names, relationships, long-term preferences), "
-            "profile=False for situational notes (including food/recipe feedback). "
-            "Use recall_memory to look up relevant past notes when it would help "
-            "(e.g. before suggesting recipes, or answering questions about plans, "
-            "family members, or past conversations)."
+            "profile=False for situational notes (e.g. plans, things tried, feedback on suggestions). "
+            "Use recall_memory to look up relevant past notes when it would help answer the "
+            "current question or make a better suggestion."
         )
         notes = self._store.get_profile_memories(chat_id)
         if notes:

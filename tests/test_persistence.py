@@ -1,5 +1,3 @@
-import sqlite3
-
 from persistence.store import ConversationStore
 
 
@@ -94,23 +92,3 @@ def test_search_memories_limit():
 
     results = store.search_memories(1, "pasta", limit=2)
     assert results == ["pasta note 4", "pasta note 3"]
-
-
-def test_food_notes_table_migrated_to_memories(tmp_path):
-    db_path = str(tmp_path / "batputer.db")
-    raw = sqlite3.connect(db_path)
-    raw.execute(
-        "CREATE TABLE food_notes (id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, "
-        "note TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))"
-    )
-    raw.execute("INSERT INTO food_notes (chat_id, note) VALUES (1, 'Garlic shrimp pasta: too salty')")
-    raw.commit()
-    raw.close()
-
-    store = ConversationStore(db_path)
-
-    assert store.search_memories(1, "pasta") == ["Garlic shrimp pasta: too salty"]
-    remaining = store._conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='food_notes'"
-    ).fetchone()
-    assert remaining is None
