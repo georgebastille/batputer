@@ -59,7 +59,7 @@ if __name__ == "__main__":
 
     gmail_client = _build_gmail_client()
     if gmail_client:
-        tools.gmail_search.configure(gmail_client)
+        tools.gmail_search.configure(gmail_client, client, MODEL)
 
         from tasks.gmail_monitor import GmailMonitorTask
         gmail_task = GmailMonitorTask(
