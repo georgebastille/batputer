@@ -1,12 +1,14 @@
 import datetime
+import inspect
 import json
 import logging
 import zoneinfo
+from typing import AsyncIterator
 
 import openai
 
 from persistence.store import ConversationStore
-from tools.commons import TOOL_CALLABLES, TOOLS_REGISTRY
+from tools.commons import TOOL_CALLABLES, TOOLS_REGISTRY, Result, Status
 
 logger = logging.getLogger(__name__)
 LONDON_TZ = zoneinfo.ZoneInfo("Europe/London")
@@ -21,20 +23,20 @@ class BatPuter:
         self._model = model
         self._store = store
 
-    async def process_message(self, chat_id: int, text: str) -> str:
+    async def process_message(self, chat_id: int, text: str) -> AsyncIterator[Status | Result]:
         try:
-            return await self._run(chat_id, text)
+            async for item in self._run(chat_id, text):
+                yield item
         except openai.APIConnectionError:
             raise RuntimeError("Cannot reach the local LLM. Is LM Studio running?")
         except openai.APIStatusError as e:
             raise RuntimeError(f"LLM error {e.status_code}")
 
-    async def _run(self, chat_id: int, text: str) -> str:
+    async def _run(self, chat_id: int, text: str) -> AsyncIterator[Status | Result]:
         messages = self._load_context(chat_id)
         messages.append({"role": "user", "content": text})
         self._store.save_message(chat_id, messages[-1])
 
-        reply = None
         for _ in range(self.MAX_TOOL_ITERATIONS):
             text_reply, tool_calls = self._chat_with_tools(messages)
             if tool_calls:
@@ -50,25 +52,29 @@ class BatPuter:
                 messages.append(assistant_msg)
                 self._store.save_message(chat_id, assistant_msg)
                 for tc in tool_calls:
-                    result = self._dispatch_tool(tc)
+                    yield Status(f"Using {tc.function.name}...")
+                    tool_result = ""
+                    async for item in self._dispatch_tool(tc):
+                        if isinstance(item, Result):
+                            tool_result = item.text
+                        else:
+                            yield item
                     tool_msg = {
                         "role": "tool",
-                        "content": result,
+                        "content": tool_result,
                         "tool_call_id": tc.id,
                     }
                     messages.append(tool_msg)
                     self._store.save_message(chat_id, tool_msg)
             elif text_reply:
-                reply = text_reply
-                messages.append({"role": "assistant", "content": reply})
+                messages.append({"role": "assistant", "content": text_reply})
                 self._store.save_message(chat_id, messages[-1])
-                break
+                async for item in self._maybe_compress(chat_id, messages):
+                    yield item
+                yield Result(text_reply)
+                return
 
-        if reply is None:
-            return "I got stuck in a loop. Please try again."
-
-        self._maybe_compress(chat_id, messages)
-        return reply
+        yield Result("I got stuck in a loop. Please try again.")
 
     def _load_context(self, chat_id: int) -> list[dict]:
         messages = self._store.load(chat_id)
@@ -101,25 +107,31 @@ class BatPuter:
             return None, choice.message.tool_calls
         return choice.message.content, None
 
-    def _dispatch_tool(self, tool_call) -> str:
+    async def _dispatch_tool(self, tool_call) -> AsyncIterator[Status | Result]:
         name = tool_call.function.name
         fn = TOOL_CALLABLES.get(name)
         if fn is None:
-            return f"Unknown tool: {name}"
+            yield Result(f"Unknown tool: {name}")
+            return
         try:
             args = json.loads(tool_call.function.arguments)
-            return str(fn(**args))
+            if inspect.isasyncgenfunction(fn):
+                async for item in fn(**args):
+                    yield item
+            else:
+                yield Result(str(fn(**args)))
         except Exception as e:
-            return f"Tool {name} failed: {e}"
+            yield Result(f"Tool {name} failed: {e}")
 
     def _estimate_tokens(self, messages: list) -> int:
         return sum(len(str(m.get("content") or "")) // 3 + 10 for m in messages)
 
-    def _maybe_compress(self, chat_id: int, messages: list) -> None:
+    async def _maybe_compress(self, chat_id: int, messages: list) -> AsyncIterator[Status]:
         if self._estimate_tokens(messages) <= self.CONTEXT_TOKEN_BUDGET:
             return
         if len(messages) <= 8:
             return
+        yield Status("Compacting conversation history...")
         middle = messages[1:-6]
         summary = self._raw_chat([
             {

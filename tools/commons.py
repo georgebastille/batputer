@@ -1,9 +1,20 @@
 import inspect
 import re
 import typing
+from dataclasses import dataclass
 
 TOOLS_REGISTRY: list[dict] = []
 TOOL_CALLABLES: dict[str, callable] = {}
+
+
+@dataclass
+class Status:
+    text: str
+
+
+@dataclass
+class Result:
+    text: str
 
 _TYPE_MAP = {
     str: "string",

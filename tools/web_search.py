@@ -1,9 +1,10 @@
 import json
+from typing import AsyncIterator
 
 import trafilatura
 from ddgs import DDGS
 
-from tools.commons import tool
+from tools.commons import Result, Status, tool
 
 _CLIENT = None
 _MODEL = None
@@ -26,14 +27,15 @@ def fetch_page_text(url: str) -> str:
 
 
 @tool
-def web_search(query: str, max_results: int = 32) -> str:
+async def web_search(query: str, max_results: int = 32):
     """Search the web and return a summarised answer with source links.
 
     Args:
         query: The question or topic to research.
         max_results: Maximum number of search results to retrieve.
     """
-    return WebSearchAgent(_CLIENT, _MODEL).run(query, max_results)
+    async for item in WebSearchAgent(_CLIENT, _MODEL).run(query, max_results):
+        yield item
 
 
 class WebSearchAgent:
@@ -54,22 +56,34 @@ class WebSearchAgent:
         self._client = client
         self._model = model
 
-    def run(self, query: str, max_results: int) -> str:
+    async def run(self, query: str, max_results: int) -> AsyncIterator[Status | Result]:
+        yield Status(f"Searching for '{query}'...")
         results = self._search(query, max_results)
         if isinstance(results, str):
-            return results
+            yield Result(results)
+            return
 
         snippets = _format_snippets(results)
+        yield Status(f"Found {len(results)} results, reviewing...")
         answer, urls_to_fetch = self._triage(query, snippets)
 
         if not urls_to_fetch:
-            return answer
+            yield Result(answer)
+            return
 
         valid_hrefs = {r["href"] for r in results}
         urls_to_fetch = [u for u in urls_to_fetch if u in valid_hrefs][:_MAX_FETCHED_PAGES]
 
-        page_content = _fetch_pages(urls_to_fetch)
-        return self._summarise(query, snippets + "\n\n--- Full page content ---\n\n" + page_content)
+        page_parts = []
+        for i, url in enumerate(urls_to_fetch, 1):
+            yield Status(f"Reading page {i} of {len(urls_to_fetch)}: {url}")
+            text = fetch_page_text(url)
+            page_parts.append(f"URL: {url}\n{text[:_MAX_PAGE_CHARS]}")
+        page_content = "\n\n".join(page_parts)
+
+        yield Status("Summarising findings...")
+        summary = self._summarise(query, snippets + "\n\n--- Full page content ---\n\n" + page_content)
+        yield Result(summary)
 
     def _search(self, query: str, max_results: int):
         try:
@@ -115,9 +129,3 @@ def _format_snippets(results: list) -> str:
     )
 
 
-def _fetch_pages(urls: list) -> str:
-    parts = []
-    for url in urls:
-        text = fetch_page_text(url)
-        parts.append(f"URL: {url}\n{text[:_MAX_PAGE_CHARS]}")
-    return "\n\n".join(parts)
