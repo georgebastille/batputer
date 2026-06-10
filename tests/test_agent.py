@@ -113,6 +113,21 @@ def test_compaction_yields_status():
     assert items[-1] == Result("Reply")
 
 
+def test_thinking_channel_yielded_as_status_and_stripped_from_reply():
+    raw = (
+        "<|channel|>analysis<|message|>I should save this to memory.<|end|>"
+        "<|start|>assistant<|channel|>final<|message|>I've saved that for you."
+    )
+    client = _mock_client_sequence(raw)
+    store = ConversationStore(":memory:")
+    agent = BatPuter(client, "test-model", store)
+    items = asyncio.run(_collect(agent.process_message(1, "remember this")))
+
+    statuses = [i.text for i in items if isinstance(i, Status)]
+    assert "Thinking: I should save this to memory." in statuses
+    assert items[-1] == Result("I've saved that for you.")
+
+
 def test_system_prompt_includes_profile_memories_when_present():
     client = _mock_client_sequence("Reply")
     store = ConversationStore(":memory:")

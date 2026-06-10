@@ -2,6 +2,7 @@ import datetime
 import inspect
 import json
 import logging
+import re
 import zoneinfo
 from typing import AsyncIterator
 
@@ -12,6 +13,38 @@ from tools.commons import TOOL_CALLABLES, TOOLS_REGISTRY, Result, Status
 
 logger = logging.getLogger(__name__)
 LONDON_TZ = zoneinfo.ZoneInfo("Europe/London")
+
+_CHANNEL_RE = re.compile(
+    r"<\|?channel\|?>\s*(\w+)\s*<\|?message\|?>(.*?)(?=<\|?(?:start|end|channel)\|?>|\Z)",
+    re.DOTALL,
+)
+_THINKING_CHANNELS = {"analysis", "thought", "thinking"}
+
+
+def _split_channels(content: str | None) -> tuple[str | None, str]:
+    """Split Harmony-style channel markup into (thinking, final) text.
+
+    Some models emit reasoning and the final reply as separate "channels"
+    in the same content string (e.g. ``<|channel|>analysis<|message|>...``).
+    Returns the reasoning text (or None if absent) and the cleaned final text.
+    """
+    if not content:
+        return None, content or ""
+    matches = list(_CHANNEL_RE.finditer(content))
+    if not matches:
+        return None, content
+    thinking_parts = []
+    final_parts = []
+    for m in matches:
+        channel, text = m.group(1), m.group(2).strip()
+        if channel in _THINKING_CHANNELS:
+            thinking_parts.append(text)
+        else:
+            final_parts.append(text)
+    thinking = "\n".join(thinking_parts) if thinking_parts else None
+    final = "\n".join(final_parts) if final_parts else content
+    final = re.sub(r"<\|?[a-z]+\|?>", "", final).strip()
+    return thinking, final
 
 
 class BatPuter:
@@ -48,7 +81,9 @@ class BatPuter:
             llm_messages = messages
             if image_data_url is not None and i == 0:
                 llm_messages = messages[:-1] + [_user_message_with_image(text, image_data_url)]
-            text_reply, tool_calls = self._chat_with_tools(llm_messages)
+            text_reply, tool_calls, thinking = self._chat_with_tools(llm_messages)
+            if thinking:
+                yield Status(f"Thinking: {thinking}")
             if tool_calls:
                 tool_calls_data = [
                     {
@@ -123,8 +158,10 @@ class BatPuter:
         )
         choice = response.choices[0]
         if choice.finish_reason == "tool_calls":
-            return None, choice.message.tool_calls
-        return choice.message.content, None
+            thinking, _ = _split_channels(choice.message.content)
+            return None, choice.message.tool_calls, thinking
+        thinking, final = _split_channels(choice.message.content)
+        return final, None, thinking
 
     async def _dispatch_tool(self, tool_call) -> AsyncIterator[Status | Result]:
         name = tool_call.function.name
@@ -177,7 +214,7 @@ class BatPuter:
             messages=messages,
             extra_body={"thinking": {"type": "disabled"}},
         )
-        return response.choices[0].message.content
+        return _split_channels(response.choices[0].message.content)[1]
 
 
 def _user_message_with_image(text: str, image_data_url: str) -> dict:
