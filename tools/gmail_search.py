@@ -1,6 +1,6 @@
 from typing import AsyncIterator
 
-from tools.commons import Result, Status, tool
+from tools.commons import Result, Status, SubAgent, tool
 
 _GMAIL = None
 _CLIENT = None
@@ -27,7 +27,7 @@ async def search_emails(query: str, max_results: int = 10):
         yield item
 
 
-class GmailSearchAgent:
+class GmailSearchAgent(SubAgent):
     _SUMMARISE_SYSTEM = (
         "You are an email assistant. "
         "Summarise the following emails in relation to the user's query, "
@@ -35,9 +35,8 @@ class GmailSearchAgent:
     )
 
     def __init__(self, gmail_client, client, model: str):
+        super().__init__(client, model)
         self._gmail = gmail_client
-        self._client = client
-        self._model = model
 
     async def run(self, query: str, max_results: int) -> AsyncIterator[Status | Result]:
         if self._gmail is None:
@@ -60,15 +59,7 @@ class GmailSearchAgent:
         yield Result(summary)
 
     def _summarise(self, query: str, formatted: str) -> str:
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": self._SUMMARISE_SYSTEM},
-                {"role": "user", "content": f"Query: {query}\n\n{formatted}"},
-            ],
-            extra_body={"thinking": {"type": "disabled"}},
-        )
-        return response.choices[0].message.content
+        return self._reply(self._SUMMARISE_SYSTEM, f"Query: {query}\n\n{formatted}")
 
 
 def _format_emails(emails: list) -> str:

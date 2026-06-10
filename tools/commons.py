@@ -16,6 +16,30 @@ class Status:
 class Result:
     text: str
 
+
+class SubAgent:
+    """Base class for tools that run an isolated LLM context to digest content
+    before returning a result to the main agent."""
+
+    def __init__(self, client, model: str):
+        self._client = client
+        self._model = model
+
+    def _chat(self, messages: list) -> str:
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+        return response.choices[0].message.content
+
+    def _reply(self, system: str, user: str) -> str:
+        return self._chat([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ])
+
+
 _TYPE_MAP = {
     str: "string",
     int: "integer",

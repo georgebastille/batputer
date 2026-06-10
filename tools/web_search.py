@@ -4,7 +4,7 @@ from typing import AsyncIterator
 import trafilatura
 from ddgs import DDGS
 
-from tools.commons import Result, Status, tool
+from tools.commons import Result, Status, SubAgent, tool
 
 _CLIENT = None
 _MODEL = None
@@ -38,7 +38,7 @@ async def web_search(query: str, max_results: int = 32):
         yield item
 
 
-class WebSearchAgent:
+class WebSearchAgent(SubAgent):
     _TRIAGE_SYSTEM = (
         "You are a research assistant. "
         "Try to answer the query using the search result snippets provided. "
@@ -51,10 +51,6 @@ class WebSearchAgent:
         "You are a research assistant. "
         "Summarise the key findings concisely and include source URLs."
     )
-
-    def __init__(self, client, model: str):
-        self._client = client
-        self._model = model
 
     async def run(self, query: str, max_results: int) -> AsyncIterator[Status | Result]:
         yield Status(f"Searching for '{query}'...")
@@ -93,10 +89,7 @@ class WebSearchAgent:
             return f"Search unavailable: {e}"
 
     def _triage(self, query: str, snippets: str) -> tuple[str, list]:
-        response = self._chat([
-            {"role": "system", "content": self._TRIAGE_SYSTEM},
-            {"role": "user", "content": f"Query: {query}\n\nSearch results:\n{snippets}"},
-        ])
+        response = self._reply(self._TRIAGE_SYSTEM, f"Query: {query}\n\nSearch results:\n{snippets}")
         try:
             stripped = response.strip()
             if stripped.startswith("{"):
@@ -108,18 +101,7 @@ class WebSearchAgent:
         return response, []
 
     def _summarise(self, query: str, content: str) -> str:
-        return self._chat([
-            {"role": "system", "content": self._SUMMARISE_SYSTEM},
-            {"role": "user", "content": f"Query: {query}\n\n{content}"},
-        ])
-
-    def _chat(self, messages: list) -> str:
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=messages,
-            extra_body={"thinking": {"type": "disabled"}},
-        )
-        return response.choices[0].message.content
+        return self._reply(self._SUMMARISE_SYSTEM, f"Query: {query}\n\n{content}")
 
 
 def _format_snippets(results: list) -> str:
