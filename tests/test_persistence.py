@@ -1,3 +1,5 @@
+import sqlite3
+
 from persistence.store import ConversationStore
 
 
@@ -48,22 +50,67 @@ def test_seen_emails():
     assert store.filter_unseen([]) == []
 
 
-def test_food_notes_roundtrip_and_ordering():
+def test_profile_memories_roundtrip_and_ordering():
     store = _make_store()
-    assert store.get_food_notes(1) == []
+    assert store.get_profile_memories(1) == []
 
-    store.add_food_note(1, "note 1")
-    store.add_food_note(1, "note 2")
-    store.add_food_note(2, "other chat note")
+    store.add_memory(1, "note 1", category="profile")
+    store.add_memory(1, "note 2", category="profile")
+    store.add_memory(2, "other chat note", category="profile")
 
-    assert store.get_food_notes(1) == ["note 1", "note 2"]
-    assert store.get_food_notes(2) == ["other chat note"]
+    assert store.get_profile_memories(1) == ["note 1", "note 2"]
+    assert store.get_profile_memories(2) == ["other chat note"]
 
 
-def test_food_notes_limit():
+def test_profile_memories_limit():
     store = _make_store()
     for i in range(5):
-        store.add_food_note(1, f"note {i}")
+        store.add_memory(1, f"note {i}", category="profile")
 
-    notes = store.get_food_notes(1, limit=3)
+    notes = store.get_profile_memories(1, limit=3)
     assert notes == ["note 2", "note 3", "note 4"]
+
+
+def test_search_memories_matches_keywords_and_respects_category():
+    store = _make_store()
+    store.add_memory(1, "Garlic shrimp pasta: too salty, use less soy sauce")
+    store.add_memory(1, "Daughter's name is Mia, age 8", category="profile")
+    store.add_memory(1, "Loved the lemon zest in the chicken dish")
+    store.add_memory(2, "Different chat's pasta note")
+
+    results = store.search_memories(1, "pasta")
+    assert results == ["Garlic shrimp pasta: too salty, use less soy sauce"]
+
+    results = store.search_memories(1, "chicken lemon")
+    assert "Loved the lemon zest in the chicken dish" in results
+
+    assert store.search_memories(1, "Mia") == []
+
+
+def test_search_memories_limit():
+    store = _make_store()
+    for i in range(5):
+        store.add_memory(1, f"pasta note {i}")
+
+    results = store.search_memories(1, "pasta", limit=2)
+    assert results == ["pasta note 4", "pasta note 3"]
+
+
+def test_food_notes_table_migrated_to_memories(tmp_path):
+    db_path = str(tmp_path / "batputer.db")
+    raw = sqlite3.connect(db_path)
+    raw.execute(
+        "CREATE TABLE food_notes (id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, "
+        "note TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
+    raw.execute("INSERT INTO food_notes (chat_id, note) VALUES (1, 'Garlic shrimp pasta: too salty')")
+    raw.commit()
+    raw.close()
+
+    store = ConversationStore(db_path)
+
+    assert store.search_memories(1, "pasta") == ["Garlic shrimp pasta: too salty"]
+    remaining = store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='food_notes'"
+    ).fetchone()
+    assert remaining is None

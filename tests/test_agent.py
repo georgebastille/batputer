@@ -113,21 +113,43 @@ def test_compaction_yields_status():
     assert items[-1] == Result("Reply")
 
 
-def test_system_prompt_includes_food_notes_when_present():
+def test_system_prompt_includes_profile_memories_when_present():
     client = _mock_client_sequence("Reply")
     store = ConversationStore(":memory:")
-    store.add_food_note(1, "Garlic shrimp pasta: too salty, use less soy sauce")
+    store.add_memory(1, "Daughter's name is Mia, age 8", category="profile")
     agent = BatPuter(client, "test-model", store)
 
     prompt = agent._make_system_prompt(1)
-    assert "Garlic shrimp pasta: too salty, use less soy sauce" in prompt["content"]
-    assert "Food notes from previous conversations" in prompt["content"]
+    assert "Daughter's name is Mia, age 8" in prompt["content"]
+    assert "What you know about the user and their family" in prompt["content"]
 
 
-def test_system_prompt_omits_food_notes_when_empty():
+def test_system_prompt_omits_profile_memories_when_empty():
     client = _mock_client_sequence("Reply")
     store = ConversationStore(":memory:")
     agent = BatPuter(client, "test-model", store)
 
     prompt = agent._make_system_prompt(1)
-    assert "Food notes from previous conversations" not in prompt["content"]
+    assert "What you know about the user and their family" not in prompt["content"]
+
+
+def test_sender_name_prefixes_stored_message():
+    client = _mock_client_sequence("Reply")
+    store = ConversationStore(":memory:")
+    agent = BatPuter(client, "test-model", store)
+    asyncio.run(_collect(agent.process_message(1, "I love pizza", sender_name="Mia")))
+
+    history = store.load(1)
+    user_messages = [m["content"] for m in history if m["role"] == "user"]
+    assert user_messages == ["[Mia]: I love pizza"]
+
+
+def test_no_sender_name_stores_plain_text():
+    client = _mock_client_sequence("Reply")
+    store = ConversationStore(":memory:")
+    agent = BatPuter(client, "test-model", store)
+    asyncio.run(_collect(agent.process_message(1, "I love pizza")))
+
+    history = store.load(1)
+    user_messages = [m["content"] for m in history if m["role"] == "user"]
+    assert user_messages == ["I love pizza"]

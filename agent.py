@@ -24,10 +24,10 @@ class BatPuter:
         self._store = store
 
     async def process_message(
-        self, chat_id: int, text: str, image_data_url: str | None = None
+        self, chat_id: int, text: str, image_data_url: str | None = None, sender_name: str | None = None
     ) -> AsyncIterator[Status | Result]:
         try:
-            async for item in self._run(chat_id, text, image_data_url):
+            async for item in self._run(chat_id, text, image_data_url, sender_name):
                 yield item
         except openai.APIConnectionError:
             raise RuntimeError("Cannot reach the local LLM. Is LM Studio running?")
@@ -35,9 +35,11 @@ class BatPuter:
             raise RuntimeError(f"LLM error {e.status_code}")
 
     async def _run(
-        self, chat_id: int, text: str, image_data_url: str | None = None
+        self, chat_id: int, text: str, image_data_url: str | None = None, sender_name: str | None = None
     ) -> AsyncIterator[Status | Result]:
         messages = self._load_context(chat_id)
+        if sender_name is not None:
+            text = f"[{sender_name}]: {text}"
         messages.append({"role": "user", "content": text})
         self._store.save_message(chat_id, messages[-1])
 
@@ -101,14 +103,16 @@ class BatPuter:
             "but note that images are not retained in conversation history. "
             "Always respond in plain text with no markdown formatting — no **, __, ||, #, or backticks. "
             f"The current date and time is {now.strftime('%A, %-d %B %Y at %H:%M')} (London, UK). "
-            "When the user shares a photo of food or ingredients and asks for recipes, "
-            "suggest recipes considering any food notes below. "
-            "When the user gives feedback on a dish or recipe (what worked, what didn't), "
-            "call remember_food_note to save it."
+            "Use remember to save important new facts about the user or their family — "
+            "set profile=True for stable core facts (names, relationships, long-term preferences), "
+            "profile=False for situational notes (including food/recipe feedback). "
+            "Use recall_memory to look up relevant past notes when it would help "
+            "(e.g. before suggesting recipes, or answering questions about plans, "
+            "family members, or past conversations)."
         )
-        notes = self._store.get_food_notes(chat_id)
+        notes = self._store.get_profile_memories(chat_id)
         if notes:
-            content += "\n\nFood notes from previous conversations (use these to inform recipe suggestions and avoid repeating past mistakes):\n"
+            content += "\n\nWhat you know about the user and their family:\n"
             content += "\n".join(f"- {note}" for note in notes)
         return {"role": "system", "content": content}
 

@@ -25,14 +25,28 @@ class ConversationStore:
                 email_id TEXT PRIMARY KEY,
                 seen_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );
-            CREATE TABLE IF NOT EXISTS food_notes (
+            CREATE TABLE IF NOT EXISTS memories (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id    INTEGER NOT NULL,
-                note       TEXT NOT NULL,
+                category   TEXT NOT NULL DEFAULT 'general',
+                content    TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
         """)
+        self._migrate_food_notes()
         self._conn.commit()
+
+    def _migrate_food_notes(self) -> None:
+        exists = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='food_notes'"
+        ).fetchone()
+        if not exists:
+            return
+        self._conn.execute(
+            "INSERT INTO memories (chat_id, category, content, created_at) "
+            "SELECT chat_id, 'general', note, created_at FROM food_notes"
+        )
+        self._conn.execute("DROP TABLE food_notes")
 
     def load(self, chat_id: int) -> list[dict]:
         rows = self._conn.execute(
@@ -107,19 +121,33 @@ class ConversationStore:
         }
         return [eid for eid in email_ids if eid not in seen]
 
-    def add_food_note(self, chat_id: int, note: str) -> None:
+    def add_memory(self, chat_id: int, content: str, category: str = "general") -> None:
         with self._conn:
             self._conn.execute(
-                "INSERT INTO food_notes (chat_id, note) VALUES (?, ?)",
-                (chat_id, note),
+                "INSERT INTO memories (chat_id, category, content) VALUES (?, ?, ?)",
+                (chat_id, category, content),
             )
 
-    def get_food_notes(self, chat_id: int, limit: int = 30) -> list[str]:
+    def get_profile_memories(self, chat_id: int, limit: int = 30) -> list[str]:
         rows = self._conn.execute(
-            "SELECT note FROM food_notes WHERE chat_id=? ORDER BY id DESC LIMIT ?",
+            "SELECT content FROM memories WHERE chat_id=? AND category='profile' "
+            "ORDER BY id DESC LIMIT ?",
             (chat_id, limit),
         ).fetchall()
-        return [row["note"] for row in reversed(rows)]
+        return [row["content"] for row in reversed(rows)]
+
+    def search_memories(self, chat_id: int, query: str, limit: int = 5) -> list[str]:
+        keywords = query.split()
+        if not keywords:
+            return []
+        conditions = " OR ".join("content LIKE ?" for _ in keywords)
+        params = [f"%{kw}%" for kw in keywords]
+        rows = self._conn.execute(
+            f"SELECT content FROM memories WHERE chat_id=? AND category='general' "
+            f"AND ({conditions}) ORDER BY id DESC LIMIT ?",
+            (chat_id, *params, limit),
+        ).fetchall()
+        return [row["content"] for row in rows]
 
     def _next_seq(self, chat_id: int) -> int:
         row = self._conn.execute(

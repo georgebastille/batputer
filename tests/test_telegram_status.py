@@ -41,31 +41,34 @@ def test_status_reporter_swallows_bad_request():
     asyncio.run(status.clear())  # should not raise
 
 
-def _make_connector(message_handler):
+def _make_connector(message_handler, primary_user_name=None):
     connector = TelegramConnector.__new__(TelegramConnector)
     connector._app = MagicMock()
     connector._app.bot = _make_bot()
     connector._message_handler = message_handler
+    connector._primary_user_name = primary_user_name
     return connector
 
 
-def _make_update(text="hello"):
+def _make_update(text="hello", first_name="Richie"):
     update = MagicMock()
     update.effective_chat.id = 1
+    update.effective_user.first_name = first_name
     update.message.text = text
     return update
 
 
-def _make_photo_update(caption=""):
+def _make_photo_update(caption="", first_name="Richie"):
     update = MagicMock()
     update.effective_chat.id = 1
+    update.effective_user.first_name = first_name
     update.message.caption = caption
     update.message.photo = [MagicMock(file_id="small"), MagicMock(file_id="large")]
     return update
 
 
 def test_on_message_status_then_result():
-    async def handler(chat_id, text, image_data_url=None):
+    async def handler(chat_id, text, image_data_url=None, sender_name=None):
         yield Status("a")
         yield Status("b")
         yield Result("done")
@@ -80,7 +83,7 @@ def test_on_message_status_then_result():
 
 
 def test_on_message_no_status_for_plain_reply():
-    async def handler(chat_id, text, image_data_url=None):
+    async def handler(chat_id, text, image_data_url=None, sender_name=None):
         yield Result("just a reply")
 
     connector = _make_connector(handler)
@@ -95,7 +98,7 @@ def test_on_message_no_status_for_plain_reply():
 def test_on_photo_passes_image_data_url_and_caption():
     received = {}
 
-    async def handler(chat_id, text, image_data_url=None):
+    async def handler(chat_id, text, image_data_url=None, sender_name=None):
         received["text"] = text
         received["image_data_url"] = image_data_url
         yield Result("I see a cat")
@@ -114,8 +117,34 @@ def test_on_photo_passes_image_data_url_and_caption():
     connector._app.bot.send_message.assert_called_once_with(chat_id=1, text="I see a cat")
 
 
+def test_on_message_passes_sender_name():
+    received = {}
+
+    async def handler(chat_id, text, image_data_url=None, sender_name=None):
+        received["sender_name"] = sender_name
+        yield Result("ok")
+
+    connector = _make_connector(handler)
+    asyncio.run(connector._on_message(_make_update(first_name="Mia"), MagicMock()))
+
+    assert received["sender_name"] == "Mia"
+
+
+def test_on_message_omits_sender_name_for_primary_user():
+    received = {}
+
+    async def handler(chat_id, text, image_data_url=None, sender_name=None):
+        received["sender_name"] = sender_name
+        yield Result("ok")
+
+    connector = _make_connector(handler, primary_user_name="Richie")
+    asyncio.run(connector._on_message(_make_update(first_name="Richie"), MagicMock()))
+
+    assert received["sender_name"] is None
+
+
 def test_on_message_runtime_error_clears_status():
-    async def handler(chat_id, text, image_data_url=None):
+    async def handler(chat_id, text, image_data_url=None, sender_name=None):
         yield Status("working...")
         raise RuntimeError("Cannot reach the local LLM. Is LM Studio running?")
 

@@ -8,8 +8,8 @@ import urllib.request
 from dotenv import load_dotenv
 from openai import OpenAI
 
-import tools.food_notes
 import tools.gmail_search
+import tools.memory
 import tools.web_search
 from agent import BatPuter
 from connectors.telegram import TelegramConnector
@@ -80,7 +80,7 @@ if __name__ == "__main__":
 
     store = ConversationStore(os.getenv("BATPUTER_DB_PATH", "batputer.db"))
     agent = BatPuter(client, MODEL, store)
-    tools.food_notes.configure(store, TELEGRAM_CHAT_ID)
+    tools.memory.configure(store, TELEGRAM_CHAT_ID)
 
     context_window = _detect_context_window(MODEL)
     if context_window:
@@ -92,7 +92,11 @@ if __name__ == "__main__":
     else:
         logger.info("Using default context budget of %d tokens", agent.CONTEXT_TOKEN_BUDGET)
 
-    connector = TelegramConnector(token=TELEGRAM_TOKEN, message_handler=agent.process_message)
+    connector = TelegramConnector(
+        token=TELEGRAM_TOKEN,
+        message_handler=agent.process_message,
+        primary_user_name=os.getenv("BATPUTER_USER_NAME"),
+    )
 
     gmail_client = _build_gmail_client()
     if gmail_client:
