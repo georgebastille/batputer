@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import inspect
 import json
@@ -5,8 +6,6 @@ import logging
 import re
 import zoneinfo
 from typing import AsyncIterator
-
-import openai
 
 from persistence.store import ConversationStore
 from tools.commons import TOOL_CALLABLES, TOOLS_REGISTRY, Result, Status
@@ -19,6 +18,20 @@ _CHANNEL_RE = re.compile(
     re.DOTALL,
 )
 _THINKING_CHANNELS = {"analysis", "thought", "thinking"}
+
+
+def _thinking_extra_body(reasoning: int | bool | None) -> dict:
+    """Build the extra_body "thinking" config for a chat completion.
+
+    reasoning: None/False disables thinking; True enables it with no explicit
+    budget; an int enables it with that token budget (a small budget keeps
+    tool-call reasoning brief without the latency of full reasoning).
+    """
+    if not reasoning:
+        return {"thinking": {"type": "disabled"}}
+    if reasoning is True:
+        return {"thinking": {"type": "enabled"}}
+    return {"thinking": {"type": "enabled", "budget_tokens": reasoning}}
 
 
 def _split_channels(content: str | None) -> tuple[str | None, str]:
@@ -50,6 +63,7 @@ def _split_channels(content: str | None) -> tuple[str | None, str]:
 class BatPuter:
     CONTEXT_TOKEN_BUDGET = 100_000
     MAX_TOOL_ITERATIONS = 5
+    TOOL_CALL_REASONING_BUDGET = None
 
     def __init__(self, openai_client, model: str, store: ConversationStore):
         self._client = openai_client
@@ -62,26 +76,24 @@ class BatPuter:
         try:
             async for item in self._run(chat_id, text, image_data_url):
                 yield item
-        except openai.APIConnectionError:
-            raise RuntimeError("Cannot reach the local LLM. Is LM Studio running?")
-        except openai.APIStatusError as e:
-            raise RuntimeError(f"LLM error {e.status_code}")
+        except Exception as e:
+            raise RuntimeError(f"Local model error: {e}")
 
     async def _run(
         self, chat_id: int, text: str, image_data_url: str | None = None
     ) -> AsyncIterator[Status | Result]:
+        if image_data_url is not None:
+            text = f"{text}\n(Note: I can't view images right now.)" if text else (
+                "(sent a photo, no caption) (Note: I can't view images right now.)"
+            )
         messages = self._load_context(chat_id)
         messages.append({"role": "user", "content": text})
         self._store.save_message(chat_id, messages[-1])
 
-        if image_data_url is not None:
-            yield Status("Looking at the image...")
-
         for i in range(self.MAX_TOOL_ITERATIONS):
-            llm_messages = messages
-            if image_data_url is not None and i == 0:
-                llm_messages = messages[:-1] + [_user_message_with_image(text, image_data_url)]
-            text_reply, tool_calls, thinking = self._chat_with_tools(llm_messages)
+            text_reply, tool_calls, thinking = await self._chat_with_tools(
+                messages, reasoning=self.TOOL_CALL_REASONING_BUDGET
+            )
             if thinking:
                 yield Status(f"Thinking: {thinking}")
             if tool_calls:
@@ -132,8 +144,7 @@ class BatPuter:
         content = (
             "You are a helpful personal assistant named BatPuter. "
             "You have access to tools including web search. "
-            "The user can send you images; describe and answer questions about them, "
-            "but note that images are not retained in conversation history. "
+            "You cannot view images right now — if the user sends a photo, let them know. "
             "Always respond in plain text with no markdown formatting — no **, __, ||, #, or backticks. "
             f"The current date and time is {now.strftime('%A, %-d %B %Y at %H:%M')} (London, UK). "
             "Use remember to save important new facts about the user or their family — "
@@ -148,13 +159,14 @@ class BatPuter:
             content += "\n".join(f"- {note}" for note in notes)
         return {"role": "system", "content": content}
 
-    def _chat_with_tools(self, messages: list) -> tuple:
-        response = self._client.chat.completions.create(
+    async def _chat_with_tools(self, messages: list, reasoning: int | bool | None = None) -> tuple:
+        response = await asyncio.to_thread(
+            self._client.chat.completions.create,
             model=self._model,
             messages=messages,
             tools=TOOLS_REGISTRY,
             tool_choice="auto",
-            extra_body={"thinking": {"type": "disabled"}},
+            extra_body=_thinking_extra_body(reasoning),
         )
         choice = response.choices[0]
         if choice.finish_reason == "tool_calls":
@@ -189,39 +201,33 @@ class BatPuter:
             return
         yield Status("Compacting conversation history...")
         middle = messages[1:-6]
-        summary = self._raw_chat([
-            {
-                "role": "system",
-                "content": (
-                    "Summarise this conversation history concisely. "
-                    "Preserve key facts, decisions, and anything the user shared about themselves. "
-                    "Preserve any recipes or dishes that were suggested and what they were suggested in response to."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps([{"role": m["role"], "content": m.get("content")} for m in middle]),
-            },
-        ])
+        summary = await self._raw_chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Summarise this conversation history concisely. "
+                        "Preserve key facts, decisions, and anything the user shared about themselves. "
+                        "Preserve any recipes or dishes that were suggested and what they were suggested in response to."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps([{"role": m["role"], "content": m.get("content")} for m in middle]),
+                },
+            ],
+            reasoning=True,
+        )
         summary_msg = {"role": "system", "content": f"[Prior context]: {summary}"}
         compressed = [messages[0], summary_msg] + messages[-6:]
         messages[:] = compressed
         self._store.replace_all(chat_id, compressed)
 
-    def _raw_chat(self, messages: list) -> str:
-        response = self._client.chat.completions.create(
+    async def _raw_chat(self, messages: list, reasoning: int | bool | None = None) -> str:
+        response = await asyncio.to_thread(
+            self._client.chat.completions.create,
             model=self._model,
             messages=messages,
-            extra_body={"thinking": {"type": "disabled"}},
+            extra_body=_thinking_extra_body(reasoning),
         )
         return _split_channels(response.choices[0].message.content)[1]
-
-
-def _user_message_with_image(text: str, image_data_url: str) -> dict:
-    return {
-        "role": "user",
-        "content": [
-            {"type": "text", "text": text},
-            {"type": "image_url", "image_url": {"url": image_data_url}},
-        ],
-    }

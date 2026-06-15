@@ -55,11 +55,11 @@ class GmailSearchAgent(SubAgent):
             return
 
         yield Status(f"Found {len(emails)} email(s), summarising...")
-        summary = self._summarise(query, _format_emails(emails))
+        summary = await self._summarise(query, _format_emails(emails))
         yield Result(summary)
 
-    def _summarise(self, query: str, formatted: str) -> str:
-        return self._reply(self._SUMMARISE_SYSTEM, f"Query: {query}\n\n{formatted}")
+    async def _summarise(self, query: str, formatted: str) -> str:
+        return await self._reply(self._SUMMARISE_SYSTEM, f"Query: {query}\n\n{formatted}")
 
 
 def _format_emails(emails: list) -> str:

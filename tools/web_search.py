@@ -61,7 +61,7 @@ class WebSearchAgent(SubAgent):
 
         snippets = _format_snippets(results)
         yield Status(f"Found {len(results)} results, reviewing...")
-        answer, urls_to_fetch = self._triage(query, snippets)
+        answer, urls_to_fetch = await self._triage(query, snippets)
 
         if not urls_to_fetch:
             yield Result(answer)
@@ -78,7 +78,7 @@ class WebSearchAgent(SubAgent):
         page_content = "\n\n".join(page_parts)
 
         yield Status("Summarising findings...")
-        summary = self._summarise(query, snippets + "\n\n--- Full page content ---\n\n" + page_content)
+        summary = await self._summarise(query, snippets + "\n\n--- Full page content ---\n\n" + page_content)
         yield Result(summary)
 
     def _search(self, query: str, max_results: int):
@@ -88,8 +88,8 @@ class WebSearchAgent(SubAgent):
         except Exception as e:
             return f"Search unavailable: {e}"
 
-    def _triage(self, query: str, snippets: str) -> tuple[str, list]:
-        response = self._reply(self._TRIAGE_SYSTEM, f"Query: {query}\n\nSearch results:\n{snippets}")
+    async def _triage(self, query: str, snippets: str) -> tuple[str, list]:
+        response = await self._reply(self._TRIAGE_SYSTEM, f"Query: {query}\n\nSearch results:\n{snippets}")
         try:
             stripped = response.strip()
             if stripped.startswith("{"):
@@ -100,8 +100,8 @@ class WebSearchAgent(SubAgent):
             pass
         return response, []
 
-    def _summarise(self, query: str, content: str) -> str:
-        return self._reply(self._SUMMARISE_SYSTEM, f"Query: {query}\n\n{content}")
+    async def _summarise(self, query: str, content: str) -> str:
+        return await self._reply(self._SUMMARISE_SYSTEM, f"Query: {query}\n\n{content}")
 
 
 def _format_snippets(results: list) -> str:

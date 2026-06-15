@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import re
 import typing
@@ -25,16 +26,17 @@ class SubAgent:
         self._client = client
         self._model = model
 
-    def _chat(self, messages: list) -> str:
-        response = self._client.chat.completions.create(
+    async def _chat(self, messages: list) -> str:
+        response = await asyncio.to_thread(
+            self._client.chat.completions.create,
             model=self._model,
             messages=messages,
             extra_body={"thinking": {"type": "disabled"}},
         )
         return response.choices[0].message.content
 
-    def _reply(self, system: str, user: str) -> str:
-        return self._chat([
+    async def _reply(self, system: str, user: str) -> str:
+        return await self._chat([
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ])

@@ -139,6 +139,19 @@ def test_system_prompt_includes_profile_memories_when_present():
     assert "What you know about the user and their family" in prompt["content"]
 
 
+def test_image_message_gets_text_only_reply():
+    client = _mock_client_sequence("I can't view images right now, but happy to chat!")
+    store = ConversationStore(":memory:")
+    agent = BatPuter(client, "test-model", store)
+    items = asyncio.run(_collect(agent.process_message(1, "what is this?", image_data_url="data:image/jpeg;base64,xxx")))
+
+    assert items == [Result("I can't view images right now, but happy to chat!")]
+    sent_messages = client.chat.completions.create.call_args.kwargs["messages"]
+    user_msg = next(m for m in sent_messages if m["role"] == "user")
+    assert isinstance(user_msg["content"], str)
+    assert "can't view images" in user_msg["content"]
+
+
 def test_system_prompt_omits_profile_memories_when_empty():
     client = _mock_client_sequence("Reply")
     store = ConversationStore(":memory:")

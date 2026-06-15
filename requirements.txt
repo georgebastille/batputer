@@ -1,6 +1,6 @@
 python-telegram-bot[job-queue]
 python-dotenv
-openai
+mlx-lm
 google-auth-oauthlib
 google-api-python-client
 ddgs

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -49,7 +50,7 @@ class GmailMonitorTask:
             return
 
         new_emails = [e for e in emails if e["id"] in new_ids]
-        assessment = self._triage(new_emails)
+        assessment = await self._triage(new_emails)
         self._store.mark_seen(new_ids)
 
         if assessment.strip().lower() == "no action needed.":
@@ -61,7 +62,7 @@ class GmailMonitorTask:
             self._chat_id, {"role": "assistant", "content": f"[{alert}]"}
         )
 
-    def _triage(self, emails: list[dict]) -> str:
+    async def _triage(self, emails: list[dict]) -> str:
         email_list = "\n".join(
             f"- From: {e['from']}\n  Subject: {e['subject']}\n  {e['snippet']}"
             for e in emails
@@ -70,7 +71,8 @@ class GmailMonitorTask:
             {"role": "system", "content": _TRIAGE_SYSTEM},
             {"role": "user", "content": f"New emails:\n{email_list}"},
         ]
-        response = self._client.chat.completions.create(
+        response = await asyncio.to_thread(
+            self._client.chat.completions.create,
             model=self._model,
             messages=messages,
             extra_body={"thinking": {"type": "disabled"}},
