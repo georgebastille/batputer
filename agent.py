@@ -145,8 +145,10 @@ class BatPuter:
             "Use remember to save important new facts about the user or their family — "
             "set profile=True for stable core facts (names, relationships, long-term preferences), "
             "profile=False for situational notes (e.g. plans, things tried, feedback on suggestions). "
-            "Use recall_memory to look up relevant past notes when it would help answer the "
-            "current question or make a better suggestion."
+            "recall_memory searches the user's personal Obsidian notes/vault and your saved "
+            "memories. ALWAYS call recall_memory before saying you don't know or don't have "
+            "information about the user, their family, home, schedule, plans, or anything "
+            "personal — the answer is very often already in their notes."
         )
         profile = self._memory.get_profile()
         if profile:

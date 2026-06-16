@@ -28,10 +28,14 @@ def remember(content: str, profile: bool = False) -> str:
 
 @tool
 def recall_memory(query: str) -> str:
-    """Search saved memories and the user's notes for facts relevant to a topic.
+    """Search the user's personal Obsidian vault/notes and saved memories for facts.
+
+    Use this for any question about the user's life, family, home, schedule, or plans
+    before saying you don't know — the answer is often already in their notes.
 
     Args:
-        query: Keywords describing what to look for (e.g. "Italy trip", "daughter school").
+        query: Keywords describing what to look for (e.g. "Willow uniform size",
+            "Italy trip", "daughter school"). Use distinctive nouns and names.
     """
     results = _MEMORY.search(query)
     if not results:

@@ -101,13 +101,14 @@ class MarkdownMemory:
         return re.sub(r"^#\s+Profile\s*\n", "", text, count=1).strip()
 
     def search(self, query: str, limit: int = 5) -> list[str]:
-        """Keyword-grep every markdown note in the vault (the AI folder plus the
-        user's own notes). Returns matching lines, each cited with an Obsidian
-        [[wiki-link]] back to its source note."""
-        keywords = [kw.lower() for kw in _keywords(query)]
-        if not keywords:
+        """Search every markdown note in the vault (the AI folder plus the user's
+        own notes), including each note's title/path. Notes are ranked by how many
+        distinct query terms they match, so the most relevant notes win. Each result
+        is cited with an Obsidian [[wiki-link]] back to its source note."""
+        stems = [self._stem(kw) for kw in _keywords(query)]
+        if not stems:
             return []
-        results: list[str] = []
+        scored = []
         for path in sorted(self.vault.rglob("*.md")):
             if ".obsidian" in path.parts or path == self.log_path:
                 continue
@@ -116,16 +117,32 @@ class MarkdownMemory:
             except (OSError, UnicodeDecodeError):
                 continue
             rel = path.relative_to(self.vault).with_suffix("").as_posix()
-            for raw_line in text.splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                low = line.lower()
-                if any(kw in low for kw in keywords):
-                    results.append(f"[[{rel}]]: {line}")
-                    if len(results) >= limit:
-                        return results
-        return results
+            title = rel.replace("/", " ").lower()
+            body_lines = list(dict.fromkeys(
+                ln.strip() for ln in text.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ))
+            body_low = "\n".join(body_lines).lower()
+            title_matched = {s for s in stems if s in title}
+            matched = title_matched | {s for s in stems if s in body_low}
+            if not matched:
+                continue
+            # A note whose *title* matches is a far stronger hit than a stray
+            # body mention, so weight title matches heavily.
+            score = 10 * len(title_matched) + len(matched)
+            hits = [ln for ln in body_lines if any(s in ln.lower() for s in matched)]
+            snippet = " / ".join((hits or body_lines)[:6])[:500]
+            scored.append((score, rel, snippet))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        return [f"[[{rel}]]: {snippet}" for _, rel, snippet in scored[:limit]]
+
+    @staticmethod
+    def _stem(word: str) -> str:
+        """Crude singular stem so 'uniforms' matches 'uniform' and 'sizes' 'size'."""
+        w = word.lower()
+        if w.endswith("s") and not w.endswith("ss") and len(w) > 4:
+            return w[:-1]
+        return w
 
     # --- compiler support --------------------------------------------------
 
