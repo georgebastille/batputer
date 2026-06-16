@@ -56,6 +56,39 @@ def test_search_greps_whole_vault_with_citation(tmp_path):
     assert results[0] == "[[Home/Willow Uniform]]: Willow uniform jumper is age 9-10"
 
 
+def test_search_returns_full_body_of_short_note(tmp_path):
+    # A short note must come back whole, not just the line containing the query
+    # word — otherwise the model thinks the note is empty.
+    m = _memory(tmp_path)
+    (tmp_path / "Psychology.md").write_text(
+        "Trans personal psychology\nNeurotheology\nAndrew Newberg research\n"
+    )
+    results = m.search("psychology")
+    assert results == [
+        "[[Psychology]]: Trans personal psychology / Neurotheology / Andrew Newberg research"
+    ]
+
+
+def test_search_windows_long_note_around_the_hit(tmp_path):
+    # A note longer than the cap returns lines centred on the match, not line 1.
+    m = _memory(tmp_path)
+    lines = [f"filler line {i}" for i in range(1200)]
+    lines[800] = "the rare keyword zorblax lives here"
+    (tmp_path / "Big.md").write_text("\n".join(lines) + "\n")
+
+    result = m.search("zorblax")[0]
+    assert "zorblax" in result
+    assert "filler line 0" not in result  # not just the first 500 lines
+
+
+def test_search_ranks_title_matches_above_body_mentions(tmp_path):
+    m = _memory(tmp_path)
+    (tmp_path / "Willow Uniform.md").write_text("size 5/6 purple shirt\n")
+    (tmp_path / "Diary.md").write_text("today I bought a uniform for the dog\n")
+    results = m.search("uniform")
+    assert results[0].startswith("[[Willow Uniform]]")
+
+
 def test_search_ignores_obsidian_dir_and_short_queries(tmp_path):
     m = _memory(tmp_path)
     cfg = tmp_path / ".obsidian" / "app.md"

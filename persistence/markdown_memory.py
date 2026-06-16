@@ -130,11 +130,28 @@ class MarkdownMemory:
             # A note whose *title* matches is a far stronger hit than a stray
             # body mention, so weight title matches heavily.
             score = 10 * len(title_matched) + len(matched)
-            hits = [ln for ln in body_lines if any(s in ln.lower() for s in matched)]
-            snippet = " / ".join((hits or body_lines)[:6])[:500]
+            # Notes are short, so a match normally returns the whole note. Only
+            # if a note exceeds the cap do we return a window of lines centred on
+            # the matches (rather than just the first lines).
+            snippet = " / ".join(self._window(body_lines, matched))
             scored.append((score, rel, snippet))
         scored.sort(key=lambda t: (-t[0], t[1]))
         return [f"[[{rel}]]: {snippet}" for _, rel, snippet in scored[:limit]]
+
+    _MAX_SNIPPET_LINES = 500
+
+    @classmethod
+    def _window(cls, body_lines: list[str], matched: set[str]) -> list[str]:
+        """The whole note when short; otherwise a cap-sized window centred on the
+        matching lines (falling back to the start for a title-only match)."""
+        if len(body_lines) <= cls._MAX_SNIPPET_LINES:
+            return body_lines
+        hits = [i for i, ln in enumerate(body_lines) if any(s in ln.lower() for s in matched)]
+        if not hits:
+            return body_lines[: cls._MAX_SNIPPET_LINES]
+        center = (hits[0] + hits[-1]) // 2
+        start = max(0, center - cls._MAX_SNIPPET_LINES // 2)
+        return body_lines[start : start + cls._MAX_SNIPPET_LINES]
 
     @staticmethod
     def _stem(word: str) -> str:
