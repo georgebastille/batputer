@@ -3,14 +3,13 @@ import json
 from unittest.mock import MagicMock, patch
 
 import tools.web_search as ws
+from llm.mlx_client import ChatResult
 from tools.commons import Result, Status
 
 
 def _mock_openai_sequence(*texts):
     client = MagicMock()
-    client.chat.completions.create.side_effect = [
-        MagicMock(choices=[MagicMock(message=MagicMock(content=t))]) for t in texts
-    ]
+    client.generate.side_effect = [ChatResult(content=t) for t in texts]
     return client
 
 
@@ -39,7 +38,7 @@ def test_web_search_answers_from_snippets():
     assert not any("Reading" in s or "Summarising" in s for s in statuses)
     assert results == [Result("Summary of findings. Source: https://example.com/1")]
     mock_fetch.assert_not_called()  # no pages fetched
-    assert client.chat.completions.create.call_count == 1
+    assert client.generate.call_count == 1
 
 
 def test_web_search_fetches_relevant_pages():
@@ -63,7 +62,7 @@ def test_web_search_fetches_relevant_pages():
     assert any("Reading page 1 of 1" in s for s in statuses)
     assert any("Summarising" in s for s in statuses)
     assert results == [Result("Full summary with details.")]
-    assert client.chat.completions.create.call_count == 2
+    assert client.generate.call_count == 2
 
 
 def test_web_search_ignores_urls_not_in_results():

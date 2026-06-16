@@ -1,37 +1,26 @@
-import copy
 import json
 from concurrent.futures import ThreadPoolExecutor
-from types import SimpleNamespace
+from dataclasses import dataclass, field
 
 DEFAULT_MAX_TOKENS = 1024
 
 
-def _normalize_messages(messages: list[dict]) -> list[dict]:
-    """Normalize OpenAI-style messages for `apply_chat_template`.
-
-    - `content` lists (e.g. text/image parts) become a plain string (text parts only).
-    - `content=None` becomes `""`.
-    - Assistant `tool_calls[].function.arguments` JSON strings become dicts.
-    """
-    normalized = copy.deepcopy(messages)
-    for message in normalized:
-        content = message.get("content")
-        if isinstance(content, list):
-            message["content"] = "".join(
-                part.get("text", "") for part in content if part.get("type") == "text"
-            )
-        elif content is None:
-            message["content"] = ""
-
-        for tool_call in message.get("tool_calls") or []:
-            func = tool_call.get("function")
-            if func and isinstance(func.get("arguments"), str):
-                func["arguments"] = json.loads(func["arguments"])
-    return normalized
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict
 
 
-def _build_response(full_text: str, finish_reason: str, tokenizer, tools=None):
-    """Build an OpenAI-shaped chat completion response from raw generated text.
+@dataclass
+class ChatResult:
+    content: str | None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    finish_reason: str = "stop"
+
+
+def _build_result(full_text: str, finish_reason: str, tokenizer, tools=None) -> ChatResult:
+    """Build a ChatResult from raw generated text.
 
     Splits out any `<|tool_call>...<tool_call|>` spans (Gemma 4's native tool-call
     syntax) and parses them via the tokenizer's configured tool parser.
@@ -42,6 +31,7 @@ def _build_response(full_text: str, finish_reason: str, tokenizer, tools=None):
     if tokenizer.has_tool_calling and tokenizer.tool_call_start in full_text:
         start, end = tokenizer.tool_call_start, tokenizer.tool_call_end
         remaining = full_text
+        i = 0
         while start in remaining:
             before, _, rest = remaining.partition(start)
             text_parts.append(before)
@@ -51,35 +41,22 @@ def _build_response(full_text: str, finish_reason: str, tokenizer, tools=None):
             except (ValueError, json.JSONDecodeError):
                 continue
             for call in parsed if isinstance(parsed, list) else [parsed]:
-                tool_calls.append(call)
+                tool_calls.append(
+                    ToolCall(id=f"call_{i}", name=call["name"], arguments=call["arguments"])
+                )
+                i += 1
         text_parts.append(remaining)
     else:
         text_parts.append(full_text)
 
     content = "".join(text_parts).strip() or None
-
     if tool_calls:
-        message_tool_calls = [
-            SimpleNamespace(
-                id=f"call_{i}",
-                type="function",
-                function=SimpleNamespace(
-                    name=call["name"], arguments=json.dumps(call["arguments"])
-                ),
-            )
-            for i, call in enumerate(tool_calls)
-        ]
         finish_reason = "tool_calls"
-    else:
-        message_tool_calls = None
-
-    message = SimpleNamespace(content=content, tool_calls=message_tool_calls)
-    choice = SimpleNamespace(message=message, finish_reason=finish_reason)
-    return SimpleNamespace(choices=[choice])
+    return ChatResult(content=content, tool_calls=tool_calls, finish_reason=finish_reason)
 
 
 class MLXChatClient:
-    """In-process drop-in for the subset of the `openai` client used by this app.
+    """In-process Gemma 4 client backed by MLX.
 
     All MLX work happens on a single dedicated background thread. MLX's
     generation code keeps a thread-local GPU stream that is bound to the
@@ -92,7 +69,6 @@ class MLXChatClient:
         self.model, self.tokenizer, self.config = self._executor.submit(
             self._load, model_path
         ).result()
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
     @staticmethod
     def _load(model_path: str):
@@ -106,36 +82,36 @@ class MLXChatClient:
             "text_config", {}
         ).get("max_position_embeddings")
 
-    def _create(
+    def generate(
         self,
-        model: str,
         messages: list[dict],
+        *,
         tools: list[dict] | None = None,
-        tool_choice: str | None = None,
-        extra_body: dict | None = None,
+        thinking: bool = False,
         max_tokens: int = DEFAULT_MAX_TOKENS,
-    ):
+    ) -> ChatResult:
         return self._executor.submit(
-            self._create_impl, messages, tools, extra_body, max_tokens
+            self._generate_impl, messages, tools, thinking, max_tokens
         ).result()
 
-    def _create_impl(
+    def _generate_impl(
         self,
         messages: list[dict],
         tools: list[dict] | None,
-        extra_body: dict | None,
+        thinking: bool,
         max_tokens: int,
-    ):
+    ) -> ChatResult:
         from mlx_lm import stream_generate
 
-        messages = _normalize_messages(messages)
-        enable_thinking = (extra_body or {}).get("thinking", {}).get("type") == "enabled"
-
+        messages = [
+            {**m, "content": m.get("content") or ""} if m.get("content") is None else m
+            for m in messages
+        ]
         prompt = self.tokenizer.apply_chat_template(
             messages,
             tools=tools,
             add_generation_prompt=True,
-            enable_thinking=enable_thinking,
+            enable_thinking=thinking,
             tokenize=True,
         )
         full_text = ""
@@ -145,4 +121,4 @@ class MLXChatClient:
             if response.finish_reason is not None:
                 finish_reason = response.finish_reason
 
-        return _build_response(full_text, finish_reason, self.tokenizer, tools)
+        return _build_result(full_text, finish_reason, self.tokenizer, tools)

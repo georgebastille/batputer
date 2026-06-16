@@ -22,14 +22,14 @@ class GmailMonitorTask:
     def __init__(
         self,
         gmail_client: "GmailClient",
-        openai_client,
+        client,
         model: str,
         connector: "TelegramConnector",
         store: "ConversationStore",
         chat_id: int,
     ):
         self._gmail = gmail_client
-        self._client = openai_client
+        self._client = client
         self._model = model
         self._connector = connector
         self._store = store
@@ -71,10 +71,9 @@ class GmailMonitorTask:
             {"role": "system", "content": _TRIAGE_SYSTEM},
             {"role": "user", "content": f"New emails:\n{email_list}"},
         ]
-        response = await asyncio.to_thread(
-            self._client.chat.completions.create,
-            model=self._model,
-            messages=messages,
-            extra_body={"thinking": {"type": "disabled"}},
+        result = await asyncio.to_thread(
+            self._client.generate,
+            messages,
+            thinking=False,
         )
-        return response.choices[0].message.content
+        return result.content

@@ -72,7 +72,7 @@ if __name__ == "__main__":
         from tasks.gmail_monitor import GmailMonitorTask
         gmail_task = GmailMonitorTask(
             gmail_client=gmail_client,
-            openai_client=client,
+            client=client,
             model=MODEL,
             connector=connector,
             store=store,

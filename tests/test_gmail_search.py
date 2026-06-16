@@ -2,14 +2,13 @@ import asyncio
 from unittest.mock import MagicMock
 
 import tools.gmail_search as gs
+from llm.mlx_client import ChatResult
 from tools.commons import Result, Status
 
 
 def _mock_openai(text: str):
     client = MagicMock()
-    client.chat.completions.create.return_value = MagicMock(
-        choices=[MagicMock(message=MagicMock(content=text))]
-    )
+    client.generate.return_value = ChatResult(content=text)
     return client
 
 

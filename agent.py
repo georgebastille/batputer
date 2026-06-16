@@ -13,50 +13,44 @@ from tools.commons import TOOL_CALLABLES, TOOLS_REGISTRY, Result, Status
 logger = logging.getLogger(__name__)
 LONDON_TZ = zoneinfo.ZoneInfo("Europe/London")
 
-_CHANNEL_RE = re.compile(
-    r"<\|?channel\|?>\s*(\w+)\s*<\|?message\|?>(.*?)(?=<\|?(?:start|end|channel)\|?>|\Z)",
-    re.DOTALL,
-)
+_CHANNEL_OPEN = "<|channel>"
+_CHANNEL_CLOSE = "<channel|>"
 _THINKING_CHANNELS = {"analysis", "thought", "thinking"}
-
-
-def _thinking_extra_body(reasoning: int | bool | None) -> dict:
-    """Build the extra_body "thinking" config for a chat completion.
-
-    reasoning: None/False disables thinking; True enables it with no explicit
-    budget; an int enables it with that token budget (a small budget keeps
-    tool-call reasoning brief without the latency of full reasoning).
-    """
-    if not reasoning:
-        return {"thinking": {"type": "disabled"}}
-    if reasoning is True:
-        return {"thinking": {"type": "enabled"}}
-    return {"thinking": {"type": "enabled", "budget_tokens": reasoning}}
+_STRAY_CHANNEL_RE = re.compile(r"<\|?channel\|?>")
 
 
 def _split_channels(content: str | None) -> tuple[str | None, str]:
-    """Split Harmony-style channel markup into (thinking, final) text.
+    """Split Gemma channel markup into (thinking, final) text.
 
-    Some models emit reasoning and the final reply as separate "channels"
-    in the same content string (e.g. ``<|channel|>analysis<|message|>...``).
-    Returns the reasoning text (or None if absent) and the cleaned final text.
+    Gemma 4 emits reasoning and the final reply as separate "channels" in one
+    content string: an open token ``<|channel>`` is followed by the channel
+    name (e.g. ``thought``) and a newline, the channel body, then a close token
+    ``<channel|>``; text after the close is the next channel (typically the
+    final reply, which carries no markup). Returns the reasoning text (or None
+    if absent) and the cleaned final text.
     """
     if not content:
         return None, content or ""
-    matches = list(_CHANNEL_RE.finditer(content))
-    if not matches:
+    if _CHANNEL_OPEN not in content:
         return None, content
-    thinking_parts = []
-    final_parts = []
-    for m in matches:
-        channel, text = m.group(1), m.group(2).strip()
-        if channel in _THINKING_CHANNELS:
-            thinking_parts.append(text)
-        else:
-            final_parts.append(text)
-    thinking = "\n".join(thinking_parts) if thinking_parts else None
-    final = "\n".join(final_parts) if final_parts else content
-    final = re.sub(r"<\|?[a-z]+\|?>", "", final).strip()
+
+    thinking_parts: list[str] = []
+    final_parts: list[str] = []
+    remaining = content
+    while _CHANNEL_OPEN in remaining:
+        before, _, rest = remaining.partition(_CHANNEL_OPEN)
+        final_parts.append(before)
+        block, sep, remaining = rest.partition(_CHANNEL_CLOSE)
+        if not sep:
+            # Unterminated channel (e.g. generation truncated mid-thought).
+            remaining = ""
+        name, _, body = block.partition("\n")
+        bucket = thinking_parts if name.strip() in _THINKING_CHANNELS else final_parts
+        bucket.append(body.strip())
+    final_parts.append(remaining)
+
+    thinking = "\n".join(p for p in thinking_parts if p) or None
+    final = _STRAY_CHANNEL_RE.sub("", "".join(final_parts)).strip()
     return thinking, final
 
 
@@ -65,8 +59,8 @@ class BatPuter:
     MAX_TOOL_ITERATIONS = 5
     TOOL_CALL_REASONING_BUDGET = None
 
-    def __init__(self, openai_client, model: str, store: ConversationStore):
-        self._client = openai_client
+    def __init__(self, client, model: str, store: ConversationStore):
+        self._client = client
         self._model = model
         self._store = store
 
@@ -101,7 +95,7 @@ class BatPuter:
                     {
                         "id": tc.id,
                         "type": "function",
-                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        "function": {"name": tc.name, "arguments": tc.arguments},
                     }
                     for tc in tool_calls
                 ]
@@ -109,7 +103,7 @@ class BatPuter:
                 messages.append(assistant_msg)
                 self._store.save_message(chat_id, assistant_msg)
                 for tc in tool_calls:
-                    yield Status(f"Using {tc.function.name}...")
+                    yield Status(f"Using {tc.name}...")
                     tool_result = ""
                     async for item in self._dispatch_tool(tc):
                         if isinstance(item, Result):
@@ -160,29 +154,26 @@ class BatPuter:
         return {"role": "system", "content": content}
 
     async def _chat_with_tools(self, messages: list, reasoning: int | bool | None = None) -> tuple:
-        response = await asyncio.to_thread(
-            self._client.chat.completions.create,
-            model=self._model,
-            messages=messages,
+        result = await asyncio.to_thread(
+            self._client.generate,
+            messages,
             tools=TOOLS_REGISTRY,
-            tool_choice="auto",
-            extra_body=_thinking_extra_body(reasoning),
+            thinking=bool(reasoning),
         )
-        choice = response.choices[0]
-        if choice.finish_reason == "tool_calls":
-            thinking, _ = _split_channels(choice.message.content)
-            return None, choice.message.tool_calls, thinking
-        thinking, final = _split_channels(choice.message.content)
+        if result.finish_reason == "tool_calls":
+            thinking, _ = _split_channels(result.content)
+            return None, result.tool_calls, thinking
+        thinking, final = _split_channels(result.content)
         return final, None, thinking
 
     async def _dispatch_tool(self, tool_call) -> AsyncIterator[Status | Result]:
-        name = tool_call.function.name
+        name = tool_call.name
         fn = TOOL_CALLABLES.get(name)
         if fn is None:
             yield Result(f"Unknown tool: {name}")
             return
         try:
-            args = json.loads(tool_call.function.arguments)
+            args = tool_call.arguments
             if inspect.isasyncgenfunction(fn):
                 async for item in fn(**args):
                     yield item
@@ -224,10 +215,9 @@ class BatPuter:
         self._store.replace_all(chat_id, compressed)
 
     async def _raw_chat(self, messages: list, reasoning: int | bool | None = None) -> str:
-        response = await asyncio.to_thread(
-            self._client.chat.completions.create,
-            model=self._model,
-            messages=messages,
-            extra_body=_thinking_extra_body(reasoning),
+        result = await asyncio.to_thread(
+            self._client.generate,
+            messages,
+            thinking=bool(reasoning),
         )
-        return _split_channels(response.choices[0].message.content)[1]
+        return _split_channels(result.content)[1]

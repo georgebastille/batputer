@@ -1,8 +1,6 @@
-import json
-
 from mlx_lm.tool_parsers import gemma4
 
-from llm.mlx_client import _build_response, _normalize_messages
+from llm.mlx_client import _build_result
 
 
 class _FakeTokenizer:
@@ -17,23 +15,21 @@ def _wrap(text: str) -> str:
 
 
 def test_plain_text_reply():
-    response = _build_response("Hello there!", "stop", _FakeTokenizer())
-    choice = response.choices[0]
-    assert choice.message.content == "Hello there!"
-    assert choice.message.tool_calls is None
-    assert choice.finish_reason == "stop"
+    result = _build_result("Hello there!", "stop", _FakeTokenizer())
+    assert result.content == "Hello there!"
+    assert result.tool_calls == []
+    assert result.finish_reason == "stop"
 
 
 def test_single_tool_call():
     text = "Sure, let me check." + _wrap('call:web_search{query:<|"|>weather<|"|>}')
-    response = _build_response(text, "stop", _FakeTokenizer())
-    choice = response.choices[0]
-    assert choice.finish_reason == "tool_calls"
-    assert choice.message.content == "Sure, let me check."
-    assert len(choice.message.tool_calls) == 1
-    tc = choice.message.tool_calls[0]
-    assert tc.function.name == "web_search"
-    assert json.loads(tc.function.arguments) == {"query": "weather"}
+    result = _build_result(text, "stop", _FakeTokenizer())
+    assert result.finish_reason == "tool_calls"
+    assert result.content == "Sure, let me check."
+    assert len(result.tool_calls) == 1
+    tc = result.tool_calls[0]
+    assert tc.name == "web_search"
+    assert tc.arguments == {"query": "weather"}
 
 
 def test_multiple_tool_calls():
@@ -41,33 +37,19 @@ def test_multiple_tool_calls():
         'call:web_search{query:<|"|>weather<|"|>}'
         'call:remember{fact:<|"|>likes tea<|"|>}'
     )
-    response = _build_response(text, "stop", _FakeTokenizer())
-    choice = response.choices[0]
-    assert choice.finish_reason == "tool_calls"
-    names = [tc.function.name for tc in choice.message.tool_calls]
+    result = _build_result(text, "stop", _FakeTokenizer())
+    assert result.finish_reason == "tool_calls"
+    names = [tc.name for tc in result.tool_calls]
     assert names == ["web_search", "remember"]
+    assert [tc.id for tc in result.tool_calls] == ["call_0", "call_1"]
 
 
 def test_thinking_channel_with_tool_call_preserved_in_content():
     text = (
-        "<|channel|>analysis<|message|>I should search for this.<|end|>"
+        "<|channel>thought\nI should search for this.<channel|>"
         + _wrap('call:web_search{query:<|"|>weather<|"|>}')
     )
-    response = _build_response(text, "stop", _FakeTokenizer())
-    choice = response.choices[0]
-    assert choice.finish_reason == "tool_calls"
-    assert "I should search for this." in choice.message.content
-    assert len(choice.message.tool_calls) == 1
-
-
-def test_normalize_messages_handles_content_list_and_none():
-    messages = [
-        {"role": "user", "content": [{"type": "text", "text": "hello"}, {"type": "image_url", "image_url": {}}]},
-        {"role": "assistant", "content": None, "tool_calls": [
-            {"function": {"name": "web_search", "arguments": '{"query": "x"}'}}
-        ]},
-    ]
-    normalized = _normalize_messages(messages)
-    assert normalized[0]["content"] == "hello"
-    assert normalized[1]["content"] == ""
-    assert normalized[1]["tool_calls"][0]["function"]["arguments"] == {"query": "x"}
+    result = _build_result(text, "stop", _FakeTokenizer())
+    assert result.finish_reason == "tool_calls"
+    assert "I should search for this." in result.content
+    assert len(result.tool_calls) == 1

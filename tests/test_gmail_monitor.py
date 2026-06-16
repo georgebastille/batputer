@@ -2,14 +2,15 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from connectors.gmail import GmailClient
+from llm.mlx_client import ChatResult
 from persistence.store import ConversationStore
 from tasks.gmail_monitor import GmailMonitorTask
 
 
-def _make_task(gmail_client, openai_client, connector, store):
+def _make_task(gmail_client, client, connector, store):
     return GmailMonitorTask(
         gmail_client=gmail_client,
-        openai_client=openai_client,
+        client=client,
         model="test-model",
         connector=connector,
         store=store,
@@ -49,7 +50,7 @@ def _gmail_client_failing():
 
 def _openai_returning(text: str):
     client = MagicMock()
-    client.chat.completions.create.return_value.choices[0].message.content = text
+    client.generate.return_value = ChatResult(content=text)
     return client
 
 
