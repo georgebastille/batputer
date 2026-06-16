@@ -59,10 +59,11 @@ class BatPuter:
     MAX_TOOL_ITERATIONS = 5
     TOOL_CALL_REASONING_BUDGET = None
 
-    def __init__(self, client, model: str, store: ConversationStore):
+    def __init__(self, client, model: str, store: ConversationStore, memory):
         self._client = client
         self._model = model
         self._store = store
+        self._memory = memory
 
     async def process_message(
         self, chat_id: int, text: str, image_data_url: str | None = None
@@ -147,10 +148,9 @@ class BatPuter:
             "Use recall_memory to look up relevant past notes when it would help answer the "
             "current question or make a better suggestion."
         )
-        notes = self._store.get_profile_memories(chat_id)
-        if notes:
-            content += "\n\nWhat you know about the user and their family:\n"
-            content += "\n".join(f"- {note}" for note in notes)
+        profile = self._memory.get_profile()
+        if profile:
+            content += "\n\nWhat you know about the user and their family:\n" + profile
         return {"role": "system", "content": content}
 
     async def _chat_with_tools(self, messages: list, reasoning: int | bool | None = None) -> tuple:

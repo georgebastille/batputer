@@ -1,13 +1,6 @@
 import json
 import sqlite3
 
-_STOPWORDS = {
-    "about", "after", "again", "against", "before", "could", "doing",
-    "during", "have", "into", "should", "their", "them", "there", "these",
-    "they", "this", "those", "what", "when", "where", "which", "while",
-    "with", "would", "your",
-}
-
 
 class ConversationStore:
     def __init__(self, db_path: str):
@@ -31,13 +24,6 @@ class ConversationStore:
             CREATE TABLE IF NOT EXISTS seen_emails (
                 email_id TEXT PRIMARY KEY,
                 seen_at  TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-            CREATE TABLE IF NOT EXISTS memories (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id    INTEGER NOT NULL,
-                category   TEXT NOT NULL DEFAULT 'general',
-                content    TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
         """)
         self._conn.commit()
@@ -114,34 +100,6 @@ class ConversationStore:
             )
         }
         return [eid for eid in email_ids if eid not in seen]
-
-    def add_memory(self, chat_id: int, content: str, category: str = "general") -> None:
-        with self._conn:
-            self._conn.execute(
-                "INSERT INTO memories (chat_id, category, content) VALUES (?, ?, ?)",
-                (chat_id, category, content),
-            )
-
-    def get_profile_memories(self, chat_id: int, limit: int = 30) -> list[str]:
-        rows = self._conn.execute(
-            "SELECT content FROM memories WHERE chat_id=? AND category='profile' "
-            "ORDER BY id DESC LIMIT ?",
-            (chat_id, limit),
-        ).fetchall()
-        return [row["content"] for row in reversed(rows)]
-
-    def search_memories(self, chat_id: int, query: str, limit: int = 5) -> list[str]:
-        keywords = [kw for kw in query.split() if len(kw) > 3 and kw.lower() not in _STOPWORDS]
-        if not keywords:
-            return []
-        conditions = " OR ".join("content LIKE ?" for _ in keywords)
-        params = [f"%{kw}%" for kw in keywords]
-        rows = self._conn.execute(
-            f"SELECT content FROM memories WHERE chat_id=? AND category='general' "
-            f"AND ({conditions}) ORDER BY id DESC LIMIT ?",
-            (chat_id, *params, limit),
-        ).fetchall()
-        return [row["content"] for row in rows]
 
     def _next_seq(self, chat_id: int) -> int:
         row = self._conn.execute(

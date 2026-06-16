@@ -1,12 +1,12 @@
 from tools.commons import tool
 
-_STORE = None
+_MEMORY = None
 _CHAT_ID = None
 
 
-def configure(store, chat_id) -> None:
-    global _STORE, _CHAT_ID
-    _STORE = store
+def configure(memory, chat_id) -> None:
+    global _MEMORY, _CHAT_ID
+    _MEMORY = memory
     _CHAT_ID = chat_id
 
 
@@ -22,18 +22,18 @@ def remember(content: str, profile: bool = False) -> str:
             (names, family members, key long-term preferences). False (default)
             for situational notes that only matter sometimes.
     """
-    _STORE.add_memory(_CHAT_ID, content, "profile" if profile else "general")
+    _MEMORY.append_raw(content, profile=profile)
     return "Remembered."
 
 
 @tool
 def recall_memory(query: str) -> str:
-    """Search saved memories for facts relevant to a topic.
+    """Search saved memories and the user's notes for facts relevant to a topic.
 
     Args:
         query: Keywords describing what to look for (e.g. "Italy trip", "daughter school").
     """
-    results = _STORE.search_memories(_CHAT_ID, query)
+    results = _MEMORY.search(query)
     if not results:
         return "No matching memories found."
     return "\n".join(f"- {r}" for r in results)

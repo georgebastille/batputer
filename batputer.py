@@ -10,6 +10,7 @@ import tools.web_search
 from agent import BatPuter
 from connectors.telegram import TelegramConnector
 from llm.mlx_client import MLXChatClient
+from persistence.markdown_memory import MarkdownMemory
 from persistence.store import ConversationStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 MODEL = "mlx-community/gemma-4-26b-a4b-it-4bit"
 GMAIL_CHECK_INTERVAL = 900  # seconds
+MEMORY_COMPILE_INTERVAL = 1800  # seconds
+DEFAULT_VAULT_PATH = "/Users/richie/Documents/BatCloudLibrary"
 CONTEXT_WINDOW_SAFETY_MARGIN = 0.8  # leave headroom for completions and token-estimation error
 
 
@@ -48,8 +51,9 @@ if __name__ == "__main__":
     tools.web_search.configure(client, MODEL)
 
     store = ConversationStore(os.getenv("BATPUTER_DB_PATH", "batputer.db"))
-    agent = BatPuter(client, MODEL, store)
-    tools.memory.configure(store, TELEGRAM_CHAT_ID)
+    memory = MarkdownMemory(os.getenv("BATPUTER_VAULT_PATH", DEFAULT_VAULT_PATH))
+    agent = BatPuter(client, MODEL, store, memory)
+    tools.memory.configure(memory, TELEGRAM_CHAT_ID)
 
     if client.context_length:
         agent.CONTEXT_TOKEN_BUDGET = int(client.context_length * CONTEXT_WINDOW_SAFETY_MARGIN)
@@ -82,5 +86,12 @@ if __name__ == "__main__":
             gmail_task.run, interval=GMAIL_CHECK_INTERVAL, first=30
         )
         logger.info("Gmail monitor scheduled every %ds", GMAIL_CHECK_INTERVAL)
+
+    from tasks.memory_compiler import MemoryCompilerTask
+    compiler = MemoryCompilerTask(memory, client, MODEL, TELEGRAM_CHAT_ID)
+    connector.app.job_queue.run_repeating(
+        compiler.run, interval=MEMORY_COMPILE_INTERVAL, first=60
+    )
+    logger.info("Memory compiler scheduled every %ds", MEMORY_COMPILE_INTERVAL)
 
     connector.run()

@@ -25,6 +25,17 @@ def _make_tool_call(name: str, args: dict, call_id: str = "tc1"):
     return ToolCall(id=call_id, name=name, arguments=args)
 
 
+class _FakeMemory:
+    def __init__(self, profile: str = ""):
+        self._profile = profile
+
+    def get_profile(self) -> str:
+        return self._profile
+
+    def search(self, query, limit: int = 5):
+        return []
+
+
 async def _collect(agen):
     return [item async for item in agen]
 
@@ -35,7 +46,7 @@ def test_tool_call_loop():
     store = ConversationStore(":memory:")
 
     with patch("agent.TOOL_CALLABLES", {"web_search": lambda query: "Mocked result"}):
-        agent = BatPuter(client, "test-model", store)
+        agent = BatPuter(client, "test-model", store, _FakeMemory())
         items = asyncio.run(_collect(agent.process_message(1, "search for something")))
 
     statuses = [i for i in items if isinstance(i, Status)]
@@ -56,7 +67,7 @@ def test_tool_call_with_status_generator():
         yield Result("search summary")
 
     with patch("agent.TOOL_CALLABLES", {"web_search": fake_web_search}):
-        agent = BatPuter(client, "test-model", store)
+        agent = BatPuter(client, "test-model", store, _FakeMemory())
         items = asyncio.run(_collect(agent.process_message(1, "search for something")))
 
     statuses = [i.text for i in items if isinstance(i, Status)]
@@ -68,7 +79,7 @@ def test_tool_call_with_status_generator():
 def test_no_tool_call():
     client = _mock_client_sequence("Just a plain reply")
     store = ConversationStore(":memory:")
-    agent = BatPuter(client, "test-model", store)
+    agent = BatPuter(client, "test-model", store, _FakeMemory())
     items = asyncio.run(_collect(agent.process_message(1, "hello")))
     assert items == [Result("Just a plain reply")]
     assert client.generate.call_count == 1
@@ -77,7 +88,7 @@ def test_no_tool_call():
 def test_context_persists_across_messages():
     client = _mock_client_sequence("Reply 1", "Reply 2")
     store = ConversationStore(":memory:")
-    agent = BatPuter(client, "test-model", store)
+    agent = BatPuter(client, "test-model", store, _FakeMemory())
     asyncio.run(_collect(agent.process_message(1, "first")))
     asyncio.run(_collect(agent.process_message(1, "second")))
     history = store.load(1)
@@ -90,7 +101,7 @@ def test_context_persists_across_messages():
 def test_compaction_yields_status():
     client = _mock_client_sequence("Reply", "summary of older messages")
     store = ConversationStore(":memory:")
-    agent = BatPuter(client, "test-model", store)
+    agent = BatPuter(client, "test-model", store, _FakeMemory())
     agent.CONTEXT_TOKEN_BUDGET = 0  # force compaction
 
     store.replace_all(1, [agent._make_system_prompt(1)] + [
@@ -111,7 +122,7 @@ def test_thinking_channel_yielded_as_status_and_stripped_from_reply():
     )
     client = _mock_client_sequence(raw)
     store = ConversationStore(":memory:")
-    agent = BatPuter(client, "test-model", store)
+    agent = BatPuter(client, "test-model", store, _FakeMemory())
     items = asyncio.run(_collect(agent.process_message(1, "remember this")))
 
     statuses = [i.text for i in items if isinstance(i, Status)]
@@ -122,8 +133,8 @@ def test_thinking_channel_yielded_as_status_and_stripped_from_reply():
 def test_system_prompt_includes_profile_memories_when_present():
     client = _mock_client_sequence("Reply")
     store = ConversationStore(":memory:")
-    store.add_memory(1, "Daughter's name is Mia, age 8", category="profile")
-    agent = BatPuter(client, "test-model", store)
+    memory = _FakeMemory("Daughter's name is Mia, age 8")
+    agent = BatPuter(client, "test-model", store, memory)
 
     prompt = agent._make_system_prompt(1)
     assert "Daughter's name is Mia, age 8" in prompt["content"]
@@ -133,7 +144,7 @@ def test_system_prompt_includes_profile_memories_when_present():
 def test_image_message_gets_text_only_reply():
     client = _mock_client_sequence("I can't view images right now, but happy to chat!")
     store = ConversationStore(":memory:")
-    agent = BatPuter(client, "test-model", store)
+    agent = BatPuter(client, "test-model", store, _FakeMemory())
     items = asyncio.run(_collect(agent.process_message(1, "what is this?", image_data_url="data:image/jpeg;base64,xxx")))
 
     assert items == [Result("I can't view images right now, but happy to chat!")]
@@ -164,7 +175,7 @@ def test_split_channels_plain_text_passthrough():
 def test_system_prompt_omits_profile_memories_when_empty():
     client = _mock_client_sequence("Reply")
     store = ConversationStore(":memory:")
-    agent = BatPuter(client, "test-model", store)
+    agent = BatPuter(client, "test-model", store, _FakeMemory(""))
 
     prompt = agent._make_system_prompt(1)
     assert "What you know about the user and their family" not in prompt["content"]
