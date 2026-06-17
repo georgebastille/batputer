@@ -27,15 +27,21 @@ class _StatusReporter:
         self._bot = bot
         self._chat_id = chat_id
         self._message_id = None
+        self._lines: list[str] = []
 
     async def update(self, text: str) -> None:
+        # Accumulate each step into a growing checklist so the user can follow the
+        # progression (e.g. searching -> found N -> reading pages -> summarising)
+        # instead of each update overwriting the previous one.
+        self._lines.append(text)
+        body = "\n".join(self._lines)
         if self._message_id is None:
-            msg = await self._bot.send_message(chat_id=self._chat_id, text=text)
+            msg = await self._bot.send_message(chat_id=self._chat_id, text=body)
             self._message_id = msg.message_id
         else:
             try:
                 await self._bot.edit_message_text(
-                    chat_id=self._chat_id, message_id=self._message_id, text=text
+                    chat_id=self._chat_id, message_id=self._message_id, text=body
                 )
             except telegram.error.BadRequest:
                 pass

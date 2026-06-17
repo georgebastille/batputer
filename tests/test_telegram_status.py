@@ -24,7 +24,9 @@ def test_status_reporter_create_then_edit_then_clear():
     bot.send_message.assert_called_once_with(chat_id=1, text="first")
 
     asyncio.run(status.update("second"))
-    bot.edit_message_text.assert_called_once_with(chat_id=1, message_id=42, text="second")
+    bot.edit_message_text.assert_called_once_with(
+        chat_id=1, message_id=42, text="first\nsecond"
+    )
 
     asyncio.run(status.clear())
     bot.delete_message.assert_called_once_with(chat_id=1, message_id=42)
@@ -76,6 +78,8 @@ def test_on_message_status_then_result():
     bot = connector._app.bot
     assert bot.send_message.call_count == 2  # one status message, one final reply
     bot.edit_message_text.assert_called_once()  # second status update
+    # steps accumulate into a checklist rather than overwriting
+    assert bot.edit_message_text.call_args.kwargs["text"] == "a\nb"
     bot.delete_message.assert_called_once()  # status cleared before final reply
 
 
