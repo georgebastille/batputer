@@ -6,6 +6,7 @@ def get_google_service(api: str, version: str, token_path: str, scopes: list[str
                        credentials_path: str = "credentials.json"):
     """Build an authorised Google API client. Each account/scope-set uses its own
     token file; first use opens a browser for consent. Reused for Gmail and Calendar."""
+    import json
     import os
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -13,11 +14,18 @@ def get_google_service(api: str, version: str, token_path: str, scopes: list[str
     from googleapiclient.discovery import build
 
     creds = None
+    granted: set[str] = set()
     if os.path.exists(token_path):
         creds = Credentials.from_authorized_user_file(token_path, scopes)
+        # Read the *granted* scopes from the file — creds.scopes reflects the
+        # requested scopes (passed above), not what the token was actually issued for.
+        try:
+            granted = set(json.load(open(token_path)).get("scopes") or [])
+        except (OSError, ValueError):
+            granted = set()
     # Re-consent when the stored token is missing any newly-requested scope
     # (e.g. when the calendar scope is added to an existing Gmail token).
-    has_scopes = creds is not None and creds.has_scopes(scopes)
+    has_scopes = granted.issuperset(scopes)
     if not creds or not creds.valid or not has_scopes:
         if creds and creds.expired and creds.refresh_token and has_scopes:
             creds.refresh(Request())
