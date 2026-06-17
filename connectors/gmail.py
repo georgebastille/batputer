@@ -15,8 +15,11 @@ def get_google_service(api: str, version: str, token_path: str, scopes: list[str
     creds = None
     if os.path.exists(token_path):
         creds = Credentials.from_authorized_user_file(token_path, scopes)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+    # Re-consent when the stored token is missing any newly-requested scope
+    # (e.g. when the calendar scope is added to an existing Gmail token).
+    has_scopes = creds is not None and creds.has_scopes(scopes)
+    if not creds or not creds.valid or not has_scopes:
+        if creds and creds.expired and creds.refresh_token and has_scopes:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(credentials_path, scopes)

@@ -32,14 +32,27 @@ def _require_env(name: str) -> str:
     return value
 
 
-# (label, token_file, scopes). Both accounts are read-only Gmail; the primary
-# account will gain the calendar scope in a later phase (needs re-consent then).
+# (label, token_file, scopes). The primary account also holds the calendar scope
+# (events are read from / added to its calendar); the second is read-only Gmail.
+# Adding the calendar scope triggers a one-time browser re-consent for the primary.
 def _gmail_accounts_config():
-    from connectors.gmail import GMAIL_READONLY
+    from connectors.gmail import CALENDAR_EVENTS, GMAIL_READONLY
     return [
-        ("primary", "token.json", [GMAIL_READONLY]),
+        ("primary", "token.json", [GMAIL_READONLY, CALENDAR_EVENTS]),
         ("second", "token_second.json", [GMAIL_READONLY]),
     ]
+
+
+def _build_calendar_client():
+    """Build a CalendarClient from the primary account token (best-effort)."""
+    from connectors.calendar import CalendarClient
+    from connectors.gmail import CALENDAR_EVENTS, GMAIL_READONLY, get_google_service
+    try:
+        service = get_google_service("calendar", "v3", "token.json", [GMAIL_READONLY, CALENDAR_EVENTS])
+        return CalendarClient(service)
+    except Exception as e:
+        logger.warning("Calendar unavailable (%s) — calendar features disabled", e)
+        return None
 
 
 def _build_gmail_accounts():
@@ -87,6 +100,8 @@ if __name__ == "__main__":
     )
 
     gmail_accounts = _build_gmail_accounts()
+    calendar = _build_calendar_client() if gmail_accounts else None
+    logger.info("Calendar %s", "ready" if calendar else "disabled")
     if gmail_accounts:
         tools.gmail_search.configure(gmail_accounts, client, MODEL)
 
