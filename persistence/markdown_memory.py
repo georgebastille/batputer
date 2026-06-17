@@ -16,8 +16,16 @@ that recall may search.
 and ``index.md``.
 """
 import datetime
+import logging
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+_OBSIDIAN_CLI = "obsidian"  # the official Obsidian CLI
+_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 _STOPWORDS = {
     "about", "after", "again", "against", "before", "could", "doing",
@@ -195,6 +203,76 @@ class MarkdownMemory:
 
     def write_profile(self, body: str) -> None:
         self.profile_path.write_text("# Profile\n\n" + body.strip() + "\n")
+
+    def move_page(self, old_rel: str, new_rel: str) -> bool:
+        """Rename/move a note, keeping inbound [[links]] across the vault correct.
+
+        Uses the official Obsidian CLI when present (it rewrites links via the
+        running app, provided "Automatically update internal links" is enabled);
+        otherwise falls back to a plain rename. Returns True only if the CLI
+        handled the move (and thus the links). Best-effort: never raises.
+        """
+        old_path = self.vault / f"{old_rel}.md"
+        new_path = self.vault / f"{new_rel}.md"
+        if not old_path.exists() or new_path.exists():
+            return False
+        if shutil.which(_OBSIDIAN_CLI):
+            try:
+                subprocess.run(
+                    [_OBSIDIAN_CLI, "move", f"path={old_rel}.md", f"to={new_rel}.md",
+                     f"vault={self.vault.name}"],
+                    capture_output=True, text=True, timeout=30, check=True,
+                )
+                return True
+            except (subprocess.SubprocessError, OSError) as e:
+                logger.warning("obsidian move failed (%s); falling back to rename", e)
+        try:
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            old_path.rename(new_path)
+        except OSError as e:
+            logger.warning("Page rename %s -> %s failed: %s", old_rel, new_rel, e)
+        return False
+
+    def move_topic(self, old_slug: str, new_slug: str) -> bool:
+        old_rel = (self.topics_dir / f"{_slugify(old_slug)}").relative_to(self.vault).as_posix()
+        new_rel = (self.topics_dir / f"{_slugify(new_slug)}").relative_to(self.vault).as_posix()
+        return self.move_page(old_rel, new_rel)
+
+    def _note_names(self) -> set[str]:
+        names = set()
+        for p in self.vault.rglob("*.md"):
+            if ".obsidian" in p.parts:
+                continue
+            rel = p.relative_to(self.vault).with_suffix("")
+            names.add(rel.as_posix().lower())
+            names.add(rel.name.lower())
+        return names
+
+    def unresolved_links(self) -> list[str]:
+        """[[wiki-links]] in BatPuter's own pages that don't resolve to a note.
+
+        A pure-Python lint pass (no Obsidian required): the compiler is fed these
+        so it can create the missing pages or fix the links on its next run.
+        """
+        names = self._note_names()
+        unresolved, seen = [], set()
+        skip = {self.schema_path, self.log_path}
+        for p in sorted(self.ai_dir.rglob("*.md")):
+            if p in skip:
+                continue
+            try:
+                text = p.read_text()
+            except (OSError, UnicodeDecodeError):
+                continue
+            for m in _LINK_RE.finditer(text):
+                target = m.group(1).split("|")[0].split("#")[0].strip()
+                if not target or target in seen:
+                    continue
+                candidates = {target.lower(), target.lower().split("/")[-1]}
+                if not (candidates & names):
+                    seen.add(target)
+                    unresolved.append(target)
+        return unresolved
 
     def read_topic(self, slug: str) -> str:
         path = self.topics_dir / f"{_slugify(slug)}.md"

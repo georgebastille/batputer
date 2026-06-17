@@ -78,6 +78,33 @@ def test_compile_skips_echoed_placeholder_blocks(tmp_path):
     assert not (memory.topics_dir / "slug-name.md").exists()
 
 
+def test_compile_applies_rename_directive(tmp_path, monkeypatch):
+    memory = MarkdownMemory(str(tmp_path))
+    memory.append_raw("call aurora by her full name now")
+    moves = []
+    monkeypatch.setattr(memory, "move_topic", lambda o, n: moves.append((o, n)) or True)
+    output = (
+        "<<<RENAME: auri || aurora>>>\n"
+        "<<<TOPIC: aurora>>>\n# Aurora\n\nFull name used now.\n<<<END>>>\n"
+    )
+    asyncio.run(_task(memory, _client_returning(output)).run(None))
+
+    assert ("auri", "aurora") in moves
+    assert (memory.topics_dir / "aurora.md").exists()
+
+
+def test_compile_feeds_unresolved_links_into_context(tmp_path):
+    memory = MarkdownMemory(str(tmp_path))
+    memory.write_topic("auri", "Auri does [[Swimming Club]] on Tuesdays.")  # dangling link
+    memory.append_raw("a new fact")
+    task = _task(memory, _client_returning(_COMPILER_OUTPUT))
+    asyncio.run(task.run(None))
+
+    sent = task._client.generate.call_args.args[0][1]["content"]
+    assert "UNRESOLVED LINKS" in sent
+    assert "[[Swimming Club]]" in sent
+
+
 def test_compile_survives_model_error(tmp_path):
     memory = MarkdownMemory(str(tmp_path))
     memory.append_raw("some fact")

@@ -89,6 +89,45 @@ def test_search_ranks_title_matches_above_body_mentions(tmp_path):
     assert results[0].startswith("[[Willow Uniform]]")
 
 
+def test_unresolved_links_flags_only_dangling(tmp_path):
+    m = _memory(tmp_path)
+    (tmp_path / "Existing.md").write_text("hi\n")
+    m.write_topic("auri", "Sees [[Existing]] and [[Missing Page]].")
+    assert m.unresolved_links() == ["Missing Page"]
+
+
+def test_move_page_falls_back_to_rename_without_cli(tmp_path, monkeypatch):
+    import persistence.markdown_memory as mm
+    monkeypatch.setattr(mm.shutil, "which", lambda _: None)
+    m = _memory(tmp_path)
+    m.write_topic("auri", "body")
+
+    updated = m.move_page("BatPuter/topics/auri", "BatPuter/topics/aurora")
+    assert updated is False  # no CLI, so links weren't rewritten
+    assert (m.topics_dir / "aurora.md").exists()
+    assert not (m.topics_dir / "auri.md").exists()
+
+
+def test_move_page_invokes_obsidian_cli_when_present(tmp_path, monkeypatch):
+    import subprocess
+    import persistence.markdown_memory as mm
+    calls = {}
+    monkeypatch.setattr(mm.shutil, "which", lambda _: "/usr/bin/obsidian-cli")
+    monkeypatch.setattr(
+        mm.subprocess, "run",
+        lambda cmd, **kw: calls.setdefault("cmd", cmd) or subprocess.CompletedProcess(cmd, 0, "", ""),
+    )
+    m = _memory(tmp_path)
+    m.write_topic("auri", "body")
+
+    updated = m.move_page("BatPuter/topics/auri", "BatPuter/topics/aurora")
+    assert updated is True
+    assert calls["cmd"][:2] == ["obsidian", "move"]
+    assert "path=BatPuter/topics/auri.md" in calls["cmd"]
+    assert "to=BatPuter/topics/aurora.md" in calls["cmd"]
+    assert any(c.startswith("vault=") for c in calls["cmd"])
+
+
 def test_search_ignores_obsidian_dir_and_short_queries(tmp_path):
     m = _memory(tmp_path)
     cfg = tmp_path / ".obsidian" / "app.md"

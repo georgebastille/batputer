@@ -36,10 +36,15 @@ Output ONLY page blocks in this exact format, nothing else:
 ...full index: one line per page as "- [[topics/slug]] — one-line summary"...
 <<<END>>>
 
+To rename or merge a topic page (this keeps inbound [[links]] correct), emit a line:
+<<<RENAME: old-slug || new-slug>>>
+before the TOPIC block for the new page.
+
 Rules:
 - The text in ... above is a description of what to write, NOT literal content — never
   copy it, and never emit a page named "the-page-slug". Use a real slug derived from the fact.
 - Emit a TOPIC block for every page you create or change (full body, not a diff).
+- If UNRESOLVED LINKS are listed below, create those pages or fix the links.
 - Merge duplicates, prefer newer facts on contradiction, keep pages concise.\
 """
 
@@ -47,9 +52,11 @@ _PLACEHOLDER_SLUGS = {"slug-name", "the-page-slug", "slug"}
 
 _BLOCK_RE = re.compile(
     r"<<<(?P<kind>PROFILE|TOPIC|INDEX)(?::\s*(?P<slug>[^>]+?))?\s*>>>\s*\n(?P<body>.*?)"
-    r"(?=<<<(?:PROFILE|TOPIC|INDEX|END)|\Z)",
+    r"(?=<<<(?:PROFILE|TOPIC|INDEX|RENAME|END)|\Z)",
     re.DOTALL,
 )
+
+_RENAME_RE = re.compile(r"<<<RENAME:\s*(?P<old>[^|>]+?)\s*\|\|\s*(?P<new>[^>]+?)\s*>>>")
 
 
 class MemoryCompilerTask:
@@ -78,12 +85,25 @@ class MemoryCompilerTask:
         result = await asyncio.to_thread(
             self._client.generate, messages, thinking=True, max_tokens=4096
         )
-        written = self._apply(result.content or "")
+        text = result.content or ""
+        self._apply_renames(text)
+        written = self._apply(text)
         if written:
             self._memory.advance_marker(len(entries))
-            logger.info("Memory compile wrote %d page(s)", written)
+            unresolved = self._memory.unresolved_links()
+            logger.info(
+                "Memory compile wrote %d page(s); %d unresolved link(s)",
+                written, len(unresolved),
+            )
         else:
             logger.warning("Memory compile produced no parseable pages; will retry next run")
+
+    def _apply_renames(self, text: str) -> None:
+        for m in _RENAME_RE.finditer(text):
+            old, new = m.group("old").strip(), m.group("new").strip()
+            if old and new and old.lower() not in _PLACEHOLDER_SLUGS:
+                if self._memory.move_topic(old, new):
+                    logger.info("Renamed memory page %s -> %s (links updated)", old, new)
 
     def _schema(self) -> str:
         try:
@@ -101,6 +121,9 @@ class MemoryCompilerTask:
             f"- {'[PROFILE] ' if e['profile'] else ''}{e['content']}" for e in entries
         )
         parts.append("\n# NEW FACTS\n" + facts)
+        unresolved = self._memory.unresolved_links()
+        if unresolved:
+            parts.append("\n# UNRESOLVED LINKS\n" + "\n".join(f"- [[{u}]]" for u in unresolved))
         return "\n".join(parts)
 
     def _apply(self, text: str) -> int:
