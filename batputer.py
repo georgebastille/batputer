@@ -4,6 +4,7 @@ import sys
 
 from dotenv import load_dotenv
 
+import connectors.obsidian
 import tools.gmail_search
 import tools.memory
 import tools.web_search
@@ -51,7 +52,9 @@ if __name__ == "__main__":
     tools.web_search.configure(client, MODEL)
 
     store = ConversationStore(os.getenv("BATPUTER_DB_PATH", "batputer.db"))
-    memory = MarkdownMemory(os.getenv("BATPUTER_VAULT_PATH", DEFAULT_VAULT_PATH))
+    vault_path = os.getenv("BATPUTER_VAULT_PATH", DEFAULT_VAULT_PATH)
+    connectors.obsidian.ensure_running(os.path.basename(vault_path.rstrip("/")))
+    memory = MarkdownMemory(vault_path)
     agent = BatPuter(client, MODEL, store, memory)
     tools.memory.configure(memory, TELEGRAM_CHAT_ID)
 
