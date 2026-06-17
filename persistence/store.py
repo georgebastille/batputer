@@ -25,6 +25,11 @@ class ConversationStore:
                 email_id TEXT PRIMARY KEY,
                 seen_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );
+            CREATE TABLE IF NOT EXISTS pending_events (
+                token      TEXT PRIMARY KEY,
+                payload    TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
         """)
         self._conn.commit()
 
@@ -100,6 +105,24 @@ class ConversationStore:
             )
         }
         return [eid for eid in email_ids if eid not in seen]
+
+    def add_pending(self, token: str, payload: dict) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO pending_events (token, payload) VALUES (?, ?)",
+                (token, json.dumps(payload)),
+            )
+
+    def pop_pending(self, token: str) -> dict | None:
+        """Return and remove a pending event by token (None if unknown/expired)."""
+        with self._conn:
+            row = self._conn.execute(
+                "SELECT payload FROM pending_events WHERE token=?", (token,)
+            ).fetchone()
+            if row is None:
+                return None
+            self._conn.execute("DELETE FROM pending_events WHERE token=?", (token,))
+            return json.loads(row[0])
 
     def _next_seq(self, chat_id: int) -> int:
         row = self._conn.execute(

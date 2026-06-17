@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -94,14 +95,31 @@ if __name__ == "__main__":
     else:
         logger.info("Using default context budget of %d tokens", agent.CONTEXT_TOKEN_BUDGET)
 
-    connector = TelegramConnector(
-        token=TELEGRAM_TOKEN,
-        message_handler=agent.process_message,
-    )
-
     gmail_accounts = _build_gmail_accounts()
     calendar = _build_calendar_client() if gmail_accounts else None
     logger.info("Calendar %s", "ready" if calendar else "disabled")
+
+    async def _on_event_callback(action: str, token: str) -> str:
+        event = store.pop_pending(token)
+        if event is None:
+            return "This event is no longer pending."
+        if action != "add":
+            return "Skipped."
+        if not calendar:
+            return "Calendar is unavailable."
+        try:
+            await asyncio.to_thread(calendar.create_event, event)
+            return "✅ Added to your calendar."
+        except Exception:
+            logger.exception("Failed to add event to calendar")
+            return "Failed to add to calendar."
+
+    connector = TelegramConnector(
+        token=TELEGRAM_TOKEN,
+        message_handler=agent.process_message,
+        callback_handler=_on_event_callback,
+    )
+
     if gmail_accounts:
         tools.gmail_search.configure(gmail_accounts, client, MODEL)
 

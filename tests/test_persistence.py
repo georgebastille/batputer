@@ -46,3 +46,13 @@ def test_seen_emails():
     unseen = store.filter_unseen(["id1", "id4", "id5"])
     assert set(unseen) == {"id4", "id5"}
     assert store.filter_unseen([]) == []
+
+
+def test_pending_events_round_trip():
+    store = _make_store()
+    event = {"title": "Sports Day", "date": "2026-07-01"}
+    store.add_pending("tok1", event)
+
+    assert store.pop_pending("tok1") == event
+    assert store.pop_pending("tok1") is None  # consumed
+    assert store.pop_pending("unknown") is None

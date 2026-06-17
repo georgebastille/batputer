@@ -12,6 +12,7 @@ import datetime
 import json
 import logging
 import re
+import uuid
 import zoneinfo
 from typing import TYPE_CHECKING
 
@@ -115,6 +116,11 @@ class EventExtractorTask:
     async def _announce(self, event: dict) -> None:
         when = event["date"] + (f" {event['start']}" if event.get("start") else "")
         where = f" @ {event['location']}" if event.get("location") else ""
-        text = f"New school event: {event['title']} — {when}{where} ({event.get('year_groups', '')})"
+        text = (
+            f"New school event: {event['title']} — {when}{where} "
+            f"({event.get('year_groups', '')}). Add to your calendar?"
+        )
         logger.info(text)
-        await self._connector.send_message(self._chat_id, text)
+        token = uuid.uuid4().hex[:10]
+        self._store.add_pending(token, event)
+        await self._connector.send_confirmation(self._chat_id, text, token)

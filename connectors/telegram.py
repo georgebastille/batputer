@@ -1,11 +1,17 @@
 import base64
 import logging
 import re
-from typing import AsyncIterator, Callable, Optional
+from typing import AsyncIterator, Awaitable, Callable, Optional
 
 import telegram
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from tools.commons import Result, Status
 
@@ -60,15 +66,19 @@ class TelegramConnector:
         self,
         token: str,
         message_handler: Callable[[int, str, Optional[str]], AsyncIterator[Status | Result]],
+        callback_handler: Optional[Callable[[str, str], Awaitable[str]]] = None,
     ):
         self._app = ApplicationBuilder().token(token).build()
         self._message_handler = message_handler
+        # callback_handler(action, token) -> resolved text shown after a button tap.
+        self._callback_handler = callback_handler
 
     def run(self) -> None:
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
         )
         self._app.add_handler(MessageHandler(filters.PHOTO, self._on_photo))
+        self._app.add_handler(CallbackQueryHandler(self._on_callback))
         self._app.run_polling()
 
     @property
@@ -77,6 +87,31 @@ class TelegramConnector:
 
     async def send_message(self, chat_id: int, text: str) -> None:
         await self._app.bot.send_message(chat_id=chat_id, text=text)
+
+    async def send_confirmation(self, chat_id: int, text: str, token: str) -> None:
+        """Send a message with inline [Add]/[Skip] buttons; the tap routes to the
+        callback handler with this token."""
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("Add", callback_data=f"add:{token}"),
+            InlineKeyboardButton("Skip", callback_data=f"skip:{token}"),
+        ]])
+        await self._app.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+
+    async def _on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        action, _, token = (query.data or "").partition(":")
+        result = "OK"
+        if self._callback_handler is not None:
+            try:
+                result = await self._callback_handler(action, token)
+            except Exception:
+                logger.exception("Callback handler failed")
+                result = "Something went wrong."
+        try:
+            await query.edit_message_text(f"{query.message.text}\n\n{result}")
+        except telegram.error.BadRequest:
+            pass
 
     async def send_typing(self, chat_id: int) -> None:
         await self._app.bot.send_chat_action(chat_id=chat_id, action="typing")

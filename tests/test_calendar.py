@@ -45,3 +45,42 @@ def test_find_matching_none_when_no_similar_event():
 def test_find_matching_empty_title_is_none():
     client = CalendarClient(_service_returning([]))
     assert client.find_matching("", "2026-07-01") is None
+
+
+def test_create_timed_event_body():
+    service = MagicMock()
+    service.events().insert().execute.return_value = {"id": "new"}
+    client = CalendarClient(service)
+
+    client.create_event({"title": "Trip", "date": "2026-06-24", "start": "10:30",
+                         "end": "12:00", "location": "Croydon"})
+
+    body = service.events().insert.call_args.kwargs["body"]
+    assert body["summary"] == "Trip"
+    assert body["location"] == "Croydon"
+    assert body["start"]["dateTime"] == "2026-06-24T10:30:00"
+    assert body["end"]["dateTime"] == "2026-06-24T12:00:00"
+
+
+def test_create_all_day_event_uses_exclusive_end_date():
+    service = MagicMock()
+    service.events().insert().execute.return_value = {"id": "new"}
+    client = CalendarClient(service)
+
+    client.create_event({"title": "Mufti Day", "date": "2026-07-01", "start": "", "end": ""})
+
+    body = service.events().insert.call_args.kwargs["body"]
+    assert body["start"] == {"date": "2026-07-01"}
+    assert body["end"] == {"date": "2026-07-02"}  # Google end date is exclusive
+
+
+def test_create_timed_event_defaults_end_to_plus_one_hour():
+    service = MagicMock()
+    service.events().insert().execute.return_value = {"id": "new"}
+    client = CalendarClient(service)
+
+    client.create_event({"title": "Assembly", "date": "2026-07-01", "start": "9:00", "end": ""})
+
+    body = service.events().insert.call_args.kwargs["body"]
+    assert body["start"]["dateTime"] == "2026-07-01T09:00:00"
+    assert body["end"]["dateTime"] == "2026-07-01T10:00:00"

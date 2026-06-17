@@ -43,11 +43,12 @@ def test_status_reporter_swallows_bad_request():
     asyncio.run(status.clear())  # should not raise
 
 
-def _make_connector(message_handler):
+def _make_connector(message_handler, callback_handler=None):
     connector = TelegramConnector.__new__(TelegramConnector)
     connector._app = MagicMock()
     connector._app.bot = _make_bot()
     connector._message_handler = message_handler
+    connector._callback_handler = callback_handler
     return connector
 
 
@@ -116,6 +117,41 @@ def test_on_photo_passes_image_data_url_and_caption():
     assert received["text"] == "what is this?"
     assert received["image_data_url"].startswith("data:image/jpeg;base64,")
     connector._app.bot.send_message.assert_called_once_with(chat_id=1, text="I see a cat")
+
+
+def test_send_confirmation_attaches_add_skip_buttons():
+    connector = _make_connector(None)
+    asyncio.run(connector.send_confirmation(7, "Add event?", "tok123"))
+
+    kwargs = connector._app.bot.send_message.call_args.kwargs
+    assert kwargs["chat_id"] == 7 and kwargs["text"] == "Add event?"
+    buttons = kwargs["reply_markup"].inline_keyboard[0]
+    assert [b.text for b in buttons] == ["Add", "Skip"]
+    assert buttons[0].callback_data == "add:tok123"
+    assert buttons[1].callback_data == "skip:tok123"
+
+
+def test_on_callback_runs_handler_and_resolves_message():
+    calls = []
+
+    async def handler(action, token):
+        calls.append((action, token))
+        return "✅ Added to your calendar."
+
+    connector = _make_connector(None, callback_handler=handler)
+    query = MagicMock()
+    query.data = "add:tok9"
+    query.answer = AsyncMock()
+    query.message.text = "Add event?"
+    query.edit_message_text = AsyncMock()
+    update = MagicMock()
+    update.callback_query = query
+
+    asyncio.run(connector._on_callback(update, MagicMock()))
+
+    assert calls == [("add", "tok9")]
+    query.answer.assert_called_once()
+    query.edit_message_text.assert_called_once_with("Add event?\n\n✅ Added to your calendar.")
 
 
 def test_on_message_runtime_error_clears_status():
