@@ -119,6 +119,24 @@ if __name__ == "__main__":
         )
         logger.info("Gmail monitor scheduled every %ds", GMAIL_CHECK_INTERVAL)
 
+        if calendar:
+            from tasks.event_extractor import EventExtractorTask
+            extractor = EventExtractorTask(
+                accounts=gmail_accounts,
+                calendar=calendar,
+                client=client,
+                model=MODEL,
+                connector=connector,
+                store=store,
+                chat_id=TELEGRAM_CHAT_ID,
+                school_sender=os.getenv("BATPUTER_SCHOOL_SENDER", "rosemead"),
+                year_groups=os.getenv("BATPUTER_SCHOOL_YEARS", "Reception, Year 4"),
+            )
+            connector.app.job_queue.run_repeating(
+                extractor.run, interval=GMAIL_CHECK_INTERVAL, first=45
+            )
+            logger.info("School event extractor scheduled every %ds", GMAIL_CHECK_INTERVAL)
+
     from tasks.memory_compiler import MemoryCompilerTask
     compiler = MemoryCompilerTask(memory, client, MODEL, TELEGRAM_CHAT_ID)
     connector.app.job_queue.run_repeating(

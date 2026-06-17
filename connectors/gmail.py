@@ -41,6 +41,24 @@ def get_gmail_service(token_path: str = "token.json", scopes: list[str] = (GMAIL
     return get_google_service("gmail", "v1", token_path, list(scopes))
 
 
+def _extract_text(payload: dict) -> str:
+    """Recursively pull the text from a Gmail message payload, preferring
+    text/plain over text/html."""
+    import base64
+
+    def decode(part):
+        data = part.get("body", {}).get("data")
+        return base64.urlsafe_b64decode(data).decode("utf-8", "replace") if data else ""
+
+    if payload.get("mimeType") == "text/plain":
+        return decode(payload)
+    for part in payload.get("parts", []):
+        text = _extract_text(part)
+        if text.strip():
+            return text
+    return decode(payload)  # html-only or single-part fallback
+
+
 class GmailClient:
     def __init__(self, service):
         self._service = service
@@ -52,6 +70,17 @@ class GmailClient:
     def search(self, query: str, max_results: int = 10) -> list[dict]:
         """Return metadata for emails matching a Gmail search query."""
         return self._list_messages(max_results, query=query)
+
+    def get_full_text(self, message_id: str) -> str:
+        """Return the plain-text body of a message (falls back to whatever text
+        part exists). Needed because event details live in the body, not metadata."""
+        msg = (
+            self._service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="full")
+            .execute()
+        )
+        return _extract_text(msg.get("payload", {}))
 
     def _list_messages(self, max_results: int, label_ids: list[str] = None, query: str = None) -> list[dict]:
         kwargs = {"userId": "me", "maxResults": max_results}
