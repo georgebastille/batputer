@@ -86,8 +86,11 @@ class BatPuter:
         self._store.save_message(chat_id, messages[-1])
 
         for i in range(self.MAX_TOOL_ITERATIONS):
+            # On the final iteration disable tools so the model must produce a
+            # text reply instead of dead-ending in a tool-call loop.
+            allow_tools = i < self.MAX_TOOL_ITERATIONS - 1
             text_reply, tool_calls, thinking = await self._chat_with_tools(
-                messages, reasoning=self.TOOL_CALL_REASONING_BUDGET
+                messages, reasoning=self.TOOL_CALL_REASONING_BUDGET, allow_tools=allow_tools
             )
             if thinking:
                 yield Status(f"Thinking: {thinking}")
@@ -155,11 +158,13 @@ class BatPuter:
             content += "\n\nWhat you know about the user and their family:\n" + profile
         return {"role": "system", "content": content}
 
-    async def _chat_with_tools(self, messages: list, reasoning: int | bool | None = None) -> tuple:
+    async def _chat_with_tools(
+        self, messages: list, reasoning: int | bool | None = None, allow_tools: bool = True
+    ) -> tuple:
         result = await asyncio.to_thread(
             self._client.generate,
             messages,
-            tools=TOOLS_REGISTRY,
+            tools=TOOLS_REGISTRY if allow_tools else None,
             thinking=bool(reasoning),
         )
         if result.finish_reason == "tool_calls":

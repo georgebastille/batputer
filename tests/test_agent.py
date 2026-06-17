@@ -76,6 +76,21 @@ def test_tool_call_with_status_generator():
     assert results == [Result("Final answer")]
 
 
+def test_final_iteration_disables_tools_to_force_reply():
+    # Model keeps requesting tools; on the last iteration tools are disabled so it
+    # must answer instead of dead-ending in "I got stuck in a loop."
+    tc = _make_tool_call("web_search", {"query": "x"})
+    client = _mock_client_sequence([tc], [tc], [tc], [tc], "Here is your answer.")
+    store = ConversationStore(":memory:")
+    with patch("agent.TOOL_CALLABLES", {"web_search": lambda query: "result"}):
+        agent = BatPuter(client, "test-model", store, _FakeMemory())
+        items = asyncio.run(_collect(agent.process_message(1, "do something")))
+
+    results = [i for i in items if isinstance(i, Result)]
+    assert results == [Result("Here is your answer.")]
+    assert client.generate.call_args_list[-1].kwargs["tools"] is None  # tools off on last try
+
+
 def test_no_tool_call():
     client = _mock_client_sequence("Just a plain reply")
     store = ConversationStore(":memory:")
