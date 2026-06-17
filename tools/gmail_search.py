@@ -2,14 +2,15 @@ from typing import AsyncIterator
 
 from tools.commons import Result, Status, SubAgent, tool
 
-_GMAIL = None
+_ACCOUNTS = []
 _CLIENT = None
 _MODEL = None
 
 
-def configure(gmail_client, client, model: str) -> None:
-    global _GMAIL, _CLIENT, _MODEL
-    _GMAIL = gmail_client
+def configure(accounts, client, model: str) -> None:
+    """accounts: list of (label, GmailClient)."""
+    global _ACCOUNTS, _CLIENT, _MODEL
+    _ACCOUNTS = accounts
     _CLIENT = client
     _MODEL = model
 
@@ -23,7 +24,7 @@ async def search_emails(query: str, max_results: int = 10):
             from:, subject:, after:, and is:unread.
         max_results: Maximum number of emails to consider.
     """
-    async for item in GmailSearchAgent(_GMAIL, _CLIENT, _MODEL).run(query, max_results):
+    async for item in GmailSearchAgent(_ACCOUNTS, _CLIENT, _MODEL).run(query, max_results):
         yield item
 
 
@@ -34,21 +35,24 @@ class GmailSearchAgent(SubAgent):
         "highlighting senders, subjects, and any action needed."
     )
 
-    def __init__(self, gmail_client, client, model: str):
+    def __init__(self, accounts, client, model: str):
         super().__init__(client, model)
-        self._gmail = gmail_client
+        self._accounts = accounts
 
     async def run(self, query: str, max_results: int) -> AsyncIterator[Status | Result]:
-        if self._gmail is None:
+        if not self._accounts:
             yield Result("Gmail is not configured.")
             return
 
         yield Status(f"Searching Gmail for '{query}'...")
-        try:
-            emails = self._gmail.search(query, max_results=max_results)
-        except Exception as e:
-            yield Result(f"Gmail search failed: {e}")
-            return
+        emails = []
+        for label, gmail in self._accounts:
+            try:
+                for e in gmail.search(query, max_results=max_results):
+                    emails.append({**e, "account": label})
+            except Exception as e:
+                yield Result(f"Gmail search failed: {e}")
+                return
 
         if not emails:
             yield Result("No matching emails found.")
@@ -64,6 +68,7 @@ class GmailSearchAgent(SubAgent):
 
 def _format_emails(emails: list) -> str:
     return "\n\n".join(
-        f"From: {e['from']}\nSubject: {e['subject']}\nDate: {e['date']}\n{e['snippet']}"
+        f"Account: {e['account']}\nFrom: {e['from']}\nSubject: {e['subject']}\n"
+        f"Date: {e['date']}\n{e['snippet']}"
         for e in emails
     )

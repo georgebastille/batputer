@@ -1,7 +1,11 @@
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
+CALENDAR_EVENTS = "https://www.googleapis.com/auth/calendar.events"
 
 
-def get_gmail_service():
+def get_google_service(api: str, version: str, token_path: str, scopes: list[str],
+                       credentials_path: str = "credentials.json"):
+    """Build an authorised Google API client. Each account/scope-set uses its own
+    token file; first use opens a browser for consent. Reused for Gmail and Calendar."""
     import os
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -9,17 +13,21 @@ def get_gmail_service():
     from googleapiclient.discovery import build
 
     creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, scopes)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, scopes)
             creds = flow.run_local_server(port=0)
-        with open("token.json", "w") as f:
+        with open(token_path, "w") as f:
             f.write(creds.to_json())
-    return build("gmail", "v1", credentials=creds)
+    return build(api, version, credentials=creds)
+
+
+def get_gmail_service(token_path: str = "token.json", scopes: list[str] = (GMAIL_READONLY,)):
+    return get_google_service("gmail", "v1", token_path, list(scopes))
 
 
 class GmailClient:

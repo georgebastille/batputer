@@ -32,13 +32,27 @@ def _require_env(name: str) -> str:
     return value
 
 
-def _build_gmail_client():
-    try:
-        from connectors.gmail import GmailClient, get_gmail_service
-        return GmailClient(get_gmail_service())
-    except Exception as e:
-        logger.warning("Gmail not available (%s) — email features disabled", e)
-        return None
+# (label, token_file, scopes). Both accounts are read-only Gmail; the primary
+# account will gain the calendar scope in a later phase (needs re-consent then).
+def _gmail_accounts_config():
+    from connectors.gmail import GMAIL_READONLY
+    return [
+        ("primary", "token.json", [GMAIL_READONLY]),
+        ("second", "token_second.json", [GMAIL_READONLY]),
+    ]
+
+
+def _build_gmail_accounts():
+    """Authorise each configured account; skip any that fail. Returns [(label, GmailClient)]."""
+    from connectors.gmail import GmailClient, get_gmail_service
+    accounts = []
+    for label, token_file, scopes in _gmail_accounts_config():
+        try:
+            accounts.append((label, GmailClient(get_gmail_service(token_file, scopes))))
+            logger.info("Gmail account '%s' authorised", label)
+        except Exception as e:
+            logger.warning("Gmail account '%s' unavailable (%s) — skipping", label, e)
+    return accounts
 
 
 if __name__ == "__main__":
@@ -72,13 +86,13 @@ if __name__ == "__main__":
         message_handler=agent.process_message,
     )
 
-    gmail_client = _build_gmail_client()
-    if gmail_client:
-        tools.gmail_search.configure(gmail_client, client, MODEL)
+    gmail_accounts = _build_gmail_accounts()
+    if gmail_accounts:
+        tools.gmail_search.configure(gmail_accounts, client, MODEL)
 
         from tasks.gmail_monitor import GmailMonitorTask
         gmail_task = GmailMonitorTask(
-            gmail_client=gmail_client,
+            accounts=gmail_accounts,
             client=client,
             model=MODEL,
             connector=connector,

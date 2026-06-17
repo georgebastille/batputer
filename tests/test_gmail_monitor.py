@@ -7,9 +7,9 @@ from persistence.store import ConversationStore
 from tasks.gmail_monitor import GmailMonitorTask
 
 
-def _make_task(gmail_client, client, connector, store):
+def _make_task(gmail_client, client, connector, store, label="primary"):
     return GmailMonitorTask(
-        gmail_client=gmail_client,
+        accounts=[(label, gmail_client)],
         client=client,
         model="test-model",
         connector=connector,
@@ -70,13 +70,14 @@ def test_new_emails_trigger_alert():
     connector.send_message.assert_called_once()
     history = store.load(42)
     assert any("Email alert" in (m.get("content") or "") for m in history)
-    assert set(store.filter_unseen(["e1", "e2"])) == set()
+    # seen ids are namespaced by account label
+    assert set(store.filter_unseen(["primary:e1", "primary:e2"])) == set()
 
 
 def test_no_new_emails_no_alert():
     emails = [{"id": "e1", "subject": "Old", "from": "x@x.com", "snippet": "old"}]
     store = ConversationStore(":memory:")
-    store.mark_seen(["e1"])
+    store.mark_seen(["primary:e1"])
     connector = MagicMock()
     connector.send_message = AsyncMock()
     client = _openai_returning("irrelevant")
@@ -97,6 +98,27 @@ def test_gmail_failure_no_crash():
     asyncio.run(task.run(None))
 
     connector.send_message.assert_not_called()
+
+
+def test_two_accounts_both_checked_with_namespaced_dedup():
+    # Same message id "x1" in two accounts must be treated independently.
+    acct_a = _gmail_client_returning([{"id": "x1", "subject": "A", "from": "a@a.com", "snippet": "hi"}])
+    acct_b = _gmail_client_returning([{"id": "x1", "subject": "B", "from": "b@b.com", "snippet": "yo"}])
+    store = ConversationStore(":memory:")
+    connector = MagicMock()
+    connector.send_message = AsyncMock()
+    client = _openai_returning("needs a reply")
+
+    task = GmailMonitorTask(
+        accounts=[("primary", acct_a), ("second", acct_b)],
+        client=client, model="test-model", connector=connector, store=store, chat_id=42,
+    )
+    asyncio.run(task.run(None))
+
+    assert connector.send_message.call_count == 2  # one alert per account
+    labels = " ".join(c.args[1] for c in connector.send_message.call_args_list)
+    assert "(primary)" in labels and "(second)" in labels
+    assert set(store.filter_unseen(["primary:x1", "second:x1"])) == set()
 
 
 def test_no_action_needed_no_alert():

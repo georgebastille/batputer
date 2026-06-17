@@ -26,14 +26,14 @@ _TRIAGE_SYSTEM = (
 class GmailMonitorTask:
     def __init__(
         self,
-        gmail_client: "GmailClient",
+        accounts: "list[tuple[str, GmailClient]]",
         client,
         model: str,
         connector: "TelegramConnector",
         store: "ConversationStore",
         chat_id: int,
     ):
-        self._gmail = gmail_client
+        self._accounts = accounts
         self._client = client
         self._model = model
         self._connector = connector
@@ -41,27 +41,31 @@ class GmailMonitorTask:
         self._chat_id = chat_id
 
     async def run(self, context) -> None:
-        try:
-            emails = self._gmail.get_unread()
-        except Exception:
-            logger.exception("Gmail fetch failed")
-            return
+        for label, gmail in self._accounts:
+            try:
+                await self._check_account(label, gmail)
+            except Exception:
+                logger.exception("Gmail check failed for account %s", label)
 
+    async def _check_account(self, label: str, gmail: "GmailClient") -> None:
+        emails = gmail.get_unread()
         if not emails:
             return
 
-        new_ids = self._store.filter_unseen([e["id"] for e in emails])
-        if not new_ids:
+        # Namespace seen-ids by account so message ids can't collide across accounts.
+        by_key = {f"{label}:{e['id']}": e for e in emails}
+        new_keys = self._store.filter_unseen(list(by_key))
+        if not new_keys:
             return
 
-        new_emails = [e for e in emails if e["id"] in new_ids]
+        new_emails = [by_key[k] for k in new_keys]
         assessment = await self._triage(new_emails)
-        self._store.mark_seen(new_ids)
+        self._store.mark_seen(new_keys)
 
         if assessment.strip().lower() == "no action needed.":
             return
 
-        alert = f"Email alert: {assessment}"
+        alert = f"Email alert ({label}): {assessment}"
         await self._connector.send_message(self._chat_id, alert)
         self._store.save_message(
             self._chat_id, {"role": "assistant", "content": f"[{alert}]"}
