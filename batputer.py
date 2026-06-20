@@ -108,6 +108,10 @@ if __name__ == "__main__":
         if not calendar:
             return "Calendar is unavailable."
         try:
+            # Re-check at tap time so a second prompt for the same event (or one
+            # added since) can't create a duplicate.
+            if await asyncio.to_thread(calendar.find_matching, event["title"], event["date"]):
+                return "Already in your calendar."
             await asyncio.to_thread(calendar.create_event, event)
             return "✅ Added to your calendar."
         except Exception:
@@ -154,6 +158,20 @@ if __name__ == "__main__":
                 extractor.run, interval=GMAIL_CHECK_INTERVAL, first=45
             )
             logger.info("School event extractor scheduled every %ds", GMAIL_CHECK_INTERVAL)
+
+        from tasks.invoice_extractor import InvoiceExtractorTask
+        invoice_task = InvoiceExtractorTask(
+            accounts=gmail_accounts,
+            client=client,
+            model=MODEL,
+            connector=connector,
+            store=store,
+            chat_id=TELEGRAM_CHAT_ID,
+        )
+        connector.app.job_queue.run_repeating(
+            invoice_task.run, interval=GMAIL_CHECK_INTERVAL, first=60
+        )
+        logger.info("Invoice extractor scheduled every %ds", GMAIL_CHECK_INTERVAL)
 
     from tasks.memory_compiler import MemoryCompilerTask
     compiler = MemoryCompilerTask(memory, client, MODEL, TELEGRAM_CHAT_ID)

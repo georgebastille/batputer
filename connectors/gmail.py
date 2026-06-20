@@ -41,6 +41,23 @@ def get_gmail_service(token_path: str = "token.json", scopes: list[str] = (GMAIL
     return get_google_service("gmail", "v1", token_path, list(scopes))
 
 
+def _walk_parts(payload: dict):
+    yield payload
+    for part in payload.get("parts", []):
+        yield from _walk_parts(part)
+
+
+def _pdf_to_text(data: bytes) -> str:
+    import io
+
+    from pypdf import PdfReader
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception:
+        return ""
+
+
 def _extract_text(payload: dict) -> str:
     """Recursively pull the text from a Gmail message payload, preferring
     text/plain over text/html."""
@@ -81,6 +98,36 @@ class GmailClient:
             .execute()
         )
         return _extract_text(msg.get("payload", {}))
+
+    def get_pdf_text(self, message_id: str) -> str:
+        """Extract text from all PDF attachments on a message (empty if none).
+        Used as a fallback when payment details aren't in the email body."""
+        import base64
+
+        msg = (
+            self._service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="full")
+            .execute()
+        )
+        texts = []
+        for part in _walk_parts(msg.get("payload", {})):
+            is_pdf = part.get("mimeType") == "application/pdf" or \
+                part.get("filename", "").lower().endswith(".pdf")
+            if not is_pdf:
+                continue
+            body = part.get("body", {})
+            data = body.get("data")
+            if not data and body.get("attachmentId"):
+                att = (
+                    self._service.users().messages().attachments()
+                    .get(userId="me", messageId=message_id, id=body["attachmentId"])
+                    .execute()
+                )
+                data = att.get("data")
+            if data:
+                texts.append(_pdf_to_text(base64.urlsafe_b64decode(data)))
+        return "\n\n".join(t for t in texts if t.strip())
 
     def _list_messages(self, max_results: int, label_ids: list[str] = None, query: str = None) -> list[dict]:
         kwargs = {"userId": "me", "maxResults": max_results}

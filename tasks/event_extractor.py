@@ -32,9 +32,13 @@ def _extract_system(year_groups: str, today: str) -> str:
         "Include whole-school events; ignore events only for other year groups, and "
         "ignore non-events (newsletters, reminders with no date, general info). "
         "Resolve relative dates (e.g. 'next Friday') to absolute dates using today's date. "
+        "Capture practical details a parent needs in 'notes': what to bring, dress code "
+        "(e.g. fancy dress / non-uniform / kit), money, permission slips, and anything else "
+        "to be aware of. "
         'Reply with ONLY JSON: {"events": [{"title": str, "date": "YYYY-MM-DD", '
         '"start": "HH:MM or empty", "end": "HH:MM or empty", "location": str, '
-        '"year_groups": str}]}. If there are no relevant events, reply {"events": []}.'
+        '"year_groups": str, "notes": "practical details or empty"}]}. '
+        'If there are no relevant events, reply {"events": []}.'
     )
 
 
@@ -116,9 +120,10 @@ class EventExtractorTask:
     async def _announce(self, event: dict) -> None:
         when = event["date"] + (f" {event['start']}" if event.get("start") else "")
         where = f" @ {event['location']}" if event.get("location") else ""
+        notes = f"\nNotes: {event['notes']}" if event.get("notes") else ""
         text = (
             f"New school event: {event['title']} — {when}{where} "
-            f"({event.get('year_groups', '')}). Add to your calendar?"
+            f"({event.get('year_groups', '')}).{notes}\nAdd to your calendar?"
         )
         logger.info(text)
         token = uuid.uuid4().hex[:10]

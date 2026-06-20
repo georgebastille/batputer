@@ -12,7 +12,8 @@ def _events_json(*events):
 
 
 SPORTS_DAY = {"title": "Reception Sports Day", "date": "2026-07-01", "start": "09:30",
-              "end": "", "location": "Field", "year_groups": "Reception"}
+              "end": "", "location": "Field", "year_groups": "Reception",
+              "notes": "Bring a hat and water bottle."}
 
 
 def _gmail(emails, body="Sports day on 1 July at 9:30 for Reception."):
@@ -62,7 +63,10 @@ def test_new_school_event_offers_confirmation():
     connector.send_confirmation.assert_called_once()
     chat_id, text, token = connector.send_confirmation.call_args.args
     assert "Reception Sports Day" in text
-    assert store.pop_pending(token)["title"] == "Reception Sports Day"  # event was stored
+    assert "Bring a hat" in text  # practical notes surfaced in the prompt
+    stored = store.pop_pending(token)
+    assert stored["title"] == "Reception Sports Day"  # event was stored
+    assert stored["notes"] == "Bring a hat and water bottle."
     assert store.filter_unseen(["evt:primary:1"]) == []  # marked seen
 
 

@@ -33,6 +33,24 @@ def test_find_matching_returns_event_with_similar_title():
     assert match is not None and match["id"] == "x"
 
 
+def test_find_matching_ignores_order_and_rsm_prefix():
+    # A previously-created "RSM: Gurdwara Trip Year 4" must match an extracted
+    # "Year 4 Gurdwara Trip" (reordered, prefixed) so we don't duplicate it.
+    service = _service_returning([
+        {"id": "x", "summary": "RSM: Gurdwara Trip Year 4", "start": {"date": "2026-06-24"}},
+    ])
+    client = CalendarClient(service)
+    assert client.find_matching("Year 4 Gurdwara Trip", "2026-06-24")["id"] == "x"
+
+
+def test_find_matching_distinct_events_not_merged():
+    service = _service_returning([
+        {"id": "x", "summary": "RSM: Year 4 Trip to the Zoo", "start": {"date": "2026-06-24"}},
+    ])
+    client = CalendarClient(service)
+    assert client.find_matching("Year 4 Trip to the Museum", "2026-06-24") is None
+
+
 def test_find_matching_none_when_no_similar_event():
     service = _service_returning([
         {"id": "x", "summary": "Dentist appointment", "start": {"date": "2026-07-01"}},
@@ -56,10 +74,22 @@ def test_create_timed_event_body():
                          "end": "12:00", "location": "Croydon"})
 
     body = service.events().insert.call_args.kwargs["body"]
-    assert body["summary"] == "Trip"
+    assert body["summary"] == "RSM: Trip"  # all BatPuter events are RSM-prefixed
     assert body["location"] == "Croydon"
     assert body["start"]["dateTime"] == "2026-06-24T10:30:00"
     assert body["end"]["dateTime"] == "2026-06-24T12:00:00"
+
+
+def test_create_event_description_has_year_groups_and_notes():
+    service = MagicMock()
+    service.events().insert().execute.return_value = {"id": "new"}
+    client = CalendarClient(service)
+
+    client.create_event({"title": "Sports Day", "date": "2026-07-01", "start": "", "end": "",
+                         "year_groups": "Reception", "notes": "Bring sun cream and a hat."})
+
+    desc = service.events().insert.call_args.kwargs["body"]["description"]
+    assert "Reception" in desc and "sun cream" in desc
 
 
 def test_create_all_day_event_uses_exclusive_end_date():

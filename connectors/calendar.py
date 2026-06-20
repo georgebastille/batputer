@@ -8,6 +8,11 @@ import datetime
 import re
 
 TIMEZONE = "Europe/London"
+# Every event BatPuter creates is prefixed so it's identifiable in the calendar
+# (and so dedup can recognise its own prior events). Lowercased prefix tokens are
+# ignored when matching titles.
+EVENT_PREFIX = "RSM: "
+_PREFIX_TOKENS = {"rsm"}
 
 
 def _event_body(event: dict) -> dict:
@@ -15,9 +20,15 @@ def _event_body(event: dict) -> dict:
     Calendar insert body. Timed when a start time is present (end defaults to +1h);
     otherwise an all-day event (Google's end date is exclusive, so it's the next day)."""
     date = event["date"]
-    body = {"summary": event["title"]}
+    body = {"summary": EVENT_PREFIX + event["title"]}
     if event.get("location"):
         body["location"] = event["location"]
+    description = "\n".join(filter(None, [
+        f"Year groups: {event['year_groups']}" if event.get("year_groups") else "",
+        event.get("notes", ""),
+    ]))
+    if description:
+        body["description"] = description
     start = (event.get("start") or "").strip()
     if start:
         end = (event.get("end") or "").strip() or _plus_hour(start)
@@ -40,9 +51,11 @@ def _plus_hour(value: str) -> str:
     return f"{(int(h) + 1) % 24:02d}:{int(m or 0):02d}"
 
 
-def _norm(text: str) -> str:
-    """Lowercased, punctuation-stripped form for fuzzy title comparison."""
-    return re.sub(r"[^a-z0-9 ]+", "", (text or "").lower()).strip()
+def _tokens(text: str) -> set[str]:
+    """Significant word tokens of a title, ignoring punctuation, order, and the
+    RSM prefix — robust to reordering and extra qualifiers."""
+    words = re.sub(r"[^a-z0-9 ]+", "", (text or "").lower()).split()
+    return set(words) - _PREFIX_TOKENS
 
 
 def _start_value(event: dict) -> str:
@@ -74,16 +87,16 @@ class CalendarClient:
         ]
 
     def find_matching(self, title: str, date: str, calendar_id: str = "primary") -> dict | None:
-        """Return an existing event on `date` (YYYY-MM-DD) whose title fuzzily
-        matches `title`, else None — used to skip events already in the calendar."""
-        time_min = f"{date}T00:00:00Z"
-        time_max = f"{date}T23:59:59Z"
-        target = _norm(title)
+        """Return an existing event on `date` (YYYY-MM-DD) whose title matches
+        `title` by token set (order-independent, ignores the RSM prefix), else
+        None — used to skip events already in the calendar. A match is when one
+        title's significant words are a subset of the other's."""
+        target = _tokens(title)
         if not target:
             return None
-        for event in self.list_events(time_min, time_max, calendar_id):
-            summary = _norm(event["summary"])
-            if summary and (target in summary or summary in target):
+        for event in self.list_events(f"{date}T00:00:00Z", f"{date}T23:59:59Z", calendar_id):
+            summary = _tokens(event["summary"])
+            if summary and (target <= summary or summary <= target):
                 return event
         return None
 
