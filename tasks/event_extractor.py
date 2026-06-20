@@ -7,19 +7,13 @@ already in the calendar, and notify about the rest. The interactive [Add]/[Skip]
 confirmation + calendar write are added in the next phase; for now new events are
 logged and announced as plain messages.
 """
-import asyncio
 import datetime
-import json
 import logging
-import re
 import uuid
 import zoneinfo
-from typing import TYPE_CHECKING
 
-from tools.commons import SubAgent
-
-if TYPE_CHECKING:
-    from connectors.calendar import CalendarClient
+from tasks.email_task import PerAccountEmailTask
+from tools.commons import SubAgent, parse_json_object
 
 logger = logging.getLogger(__name__)
 LONDON_TZ = zoneinfo.ZoneInfo("Europe/London")
@@ -43,17 +37,8 @@ def _extract_system(year_groups: str, today: str) -> str:
 
 
 def _parse_events(content: str) -> list[dict]:
-    """Robustly pull the events array from the model's reply (tolerates code fences)."""
-    text = (content or "").strip()
-    text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
-    start = text.find("{")
-    if start == -1:
-        return []
-    try:
-        data = json.loads(text[start:])
-    except (json.JSONDecodeError, ValueError):
-        return []
-    events = data.get("events", []) if isinstance(data, dict) else []
+    """Pull the valid events (must have a title and date) from the model's reply."""
+    events = parse_json_object(content).get("events", [])
     return [e for e in events if isinstance(e, dict) and e.get("title") and e.get("date")]
 
 
@@ -71,51 +56,41 @@ class EventExtractionAgent(SubAgent):
         return _parse_events(reply)
 
 
-class EventExtractorTask:
-    def __init__(self, accounts, calendar: "CalendarClient", client, model: str,
+class EventExtractorTask(PerAccountEmailTask):
+    seen_prefix = "evt:"  # separate dedup namespace from triage/invoice tasks
+
+    def __init__(self, accounts, calendar, client, model: str,
                  connector, store, chat_id: int, school_sender: str, year_groups: str):
-        self._accounts = accounts
+        super().__init__(accounts, store)
         self._calendar = calendar
         self._client = client
         self._model = model
         self._connector = connector
-        self._store = store
         self._chat_id = chat_id
         self._school_sender = school_sender.lower()
         self._year_groups = year_groups
 
     async def run(self, context) -> None:
-        if not self._calendar:
-            return
-        for label, gmail in self._accounts:
-            try:
-                await self._check_account(label, gmail)
-            except Exception:
-                logger.exception("Event extraction failed for account %s", label)
+        if self._calendar:
+            await super().run(context)
 
-    async def _check_account(self, label: str, gmail) -> None:
-        school = [e for e in gmail.get_unread() if self._school_sender in e["from"].lower()]
-        if not school:
-            return
-        # Separate "seen" namespace from the triage monitor so they don't clobber each other.
-        by_key = {f"evt:{label}:{e['id']}": e for e in school}
-        new_keys = self._store.filter_unseen(list(by_key))
-        if not new_keys:
-            return
+    def _is_school(self, email: dict) -> bool:
+        return self._school_sender in email["from"].lower()
 
+    async def check_account(self, label, gmail) -> None:
+        new = self.new_unseen(label, gmail, predicate=self._is_school)
+        if not new:
+            return
         agent = EventExtractionAgent(self._client, self._model, self._year_groups)
-        for key in new_keys:
-            email = by_key[key]
+        for key, email in new:
             try:
-                body = gmail.get_full_text(email["id"])
-                events = await agent.extract(email["subject"], body)
-                for event in events:
+                for event in await agent.extract(email["subject"], gmail.get_full_text(email["id"])):
                     if self._calendar.find_matching(event["title"], event["date"]):
                         logger.info("School event already in calendar: %s", event["title"])
                         continue
                     await self._announce(event)
             finally:
-                self._store.mark_seen([key])
+                self.mark_seen([key])
 
     async def _announce(self, event: dict) -> None:
         when = event["date"] + (f" {event['start']}" if event.get("start") else "")

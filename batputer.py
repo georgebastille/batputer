@@ -37,7 +37,7 @@ def _require_env(name: str) -> str:
 # (events are read from / added to its calendar); the second is read-only Gmail.
 # Adding the calendar scope triggers a one-time browser re-consent for the primary.
 def _gmail_accounts_config():
-    from connectors.gmail import CALENDAR_EVENTS, GMAIL_READONLY
+    from connectors.google_auth import CALENDAR_EVENTS, GMAIL_READONLY
     return [
         ("primary", "token.json", [GMAIL_READONLY, CALENDAR_EVENTS]),
         ("second", "token_second.json", [GMAIL_READONLY]),
@@ -47,7 +47,7 @@ def _gmail_accounts_config():
 def _build_calendar_client():
     """Build a CalendarClient from the primary account token (best-effort)."""
     from connectors.calendar import CalendarClient
-    from connectors.gmail import CALENDAR_EVENTS, GMAIL_READONLY, get_google_service
+    from connectors.google_auth import CALENDAR_EVENTS, GMAIL_READONLY, get_google_service
     try:
         service = get_google_service("calendar", "v3", "token.json", [GMAIL_READONLY, CALENDAR_EVENTS])
         return CalendarClient(service)
@@ -58,7 +58,8 @@ def _build_calendar_client():
 
 def _build_gmail_accounts():
     """Authorise each configured account; skip any that fail. Returns [(label, GmailClient)]."""
-    from connectors.gmail import GmailClient, get_gmail_service
+    from connectors.gmail import GmailClient
+    from connectors.google_auth import get_gmail_service
     accounts = []
     for label, token_file, scopes in _gmail_accounts_config():
         try:

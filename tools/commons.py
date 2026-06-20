@@ -1,11 +1,14 @@
 import asyncio
 import inspect
+import json
 import re
 import typing
 from dataclasses import dataclass
 
 TOOLS_REGISTRY: list[dict] = []
 TOOL_CALLABLES: dict[str, callable] = {}
+
+_FENCE_RE = re.compile(r"^```(?:json)?|```$", re.MULTILINE)
 
 
 @dataclass
@@ -16,6 +19,20 @@ class Status:
 @dataclass
 class Result:
     text: str
+
+
+def parse_json_object(content: str) -> dict:
+    """Best-effort parse of a single JSON object from model output, tolerating
+    code fences and surrounding prose. Returns {} when nothing parses."""
+    text = _FENCE_RE.sub("", (content or "").strip()).strip()
+    start = text.find("{")
+    if start == -1:
+        return {}
+    try:
+        data = json.loads(text[start:])
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 class SubAgent:

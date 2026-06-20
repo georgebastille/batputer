@@ -6,11 +6,10 @@ number, and bank details (sort code + account number). If the bank details aren'
 in the email body, fall back to extracting text from any PDF attachment and try
 again. Matching invoices are announced on Telegram with everything needed to pay.
 """
-import json
 import logging
-import re
 
-from tools.commons import SubAgent
+from tasks.email_task import PerAccountEmailTask
+from tools.commons import SubAgent, parse_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +26,6 @@ _INVOICE_SYSTEM = (
 _FIELDS = ("payee", "amount", "due_date", "invoice_number", "sort_code", "account_number")
 
 
-def _parse(content: str) -> dict:
-    text = re.sub(r"^```(?:json)?|```$", "", (content or "").strip(), flags=re.MULTILINE).strip()
-    start = text.find("{")
-    if start == -1:
-        return {}
-    try:
-        data = json.loads(text[start:])
-    except (json.JSONDecodeError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
 def _has_bank_details(data: dict) -> bool:
     return bool(data.get("sort_code") and data.get("account_number"))
 
@@ -46,43 +33,31 @@ def _has_bank_details(data: dict) -> bool:
 class InvoiceExtractionAgent(SubAgent):
     async def extract(self, subject: str, body: str) -> dict:
         reply = await self._reply(_INVOICE_SYSTEM, f"Subject: {subject}\n\n{body}")
-        return _parse(reply)
+        return parse_json_object(reply)
 
 
-class InvoiceExtractorTask:
+class InvoiceExtractorTask(PerAccountEmailTask):
+    seen_prefix = "inv:"  # separate dedup namespace from triage/event tasks
+
     def __init__(self, accounts, client, model: str, connector, store, chat_id: int):
-        self._accounts = accounts
+        super().__init__(accounts, store)
         self._client = client
         self._model = model
         self._connector = connector
-        self._store = store
         self._chat_id = chat_id
 
-    async def run(self, context) -> None:
-        for label, gmail in self._accounts:
-            try:
-                await self._check_account(label, gmail)
-            except Exception:
-                logger.exception("Invoice extraction failed for account %s", label)
-
-    async def _check_account(self, label: str, gmail) -> None:
-        emails = gmail.get_unread()
-        if not emails:
+    async def check_account(self, label, gmail) -> None:
+        new = self.new_unseen(label, gmail)
+        if not new:
             return
-        by_key = {f"inv:{label}:{e['id']}": e for e in emails}
-        new_keys = self._store.filter_unseen(list(by_key))
-        if not new_keys:
-            return
-
         agent = InvoiceExtractionAgent(self._client, self._model)
-        for key in new_keys:
-            email = by_key[key]
+        for key, email in new:
             try:
                 data = await self._extract_invoice(agent, gmail, email)
                 if data.get("is_invoice"):
                     await self._announce(data)
             finally:
-                self._store.mark_seen([key])
+                self.mark_seen([key])
 
     async def _extract_invoice(self, agent, gmail, email) -> dict:
         body = gmail.get_full_text(email["id"])

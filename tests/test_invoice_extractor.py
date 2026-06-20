@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from llm.mlx_client import ChatResult
 from persistence.store import ConversationStore
-from tasks.invoice_extractor import InvoiceExtractorTask, _parse
+from tasks.invoice_extractor import InvoiceExtractorTask
+from tools.commons import parse_json_object
 
 FULL = {
     "is_invoice": True, "payee": "Acme Plumbing", "amount": "£120.00",
@@ -40,8 +41,8 @@ def _task(gmail, client, connector, store):
 
 
 def test_parse_handles_fences_and_garbage():
-    assert _parse('```json\n{"is_invoice": false}\n```') == {"is_invoice": False}
-    assert _parse("not json") == {}
+    assert parse_json_object('```json\n{"is_invoice": false}\n```') == {"is_invoice": False}
+    assert parse_json_object("not json") == {}
 
 
 def test_invoice_with_full_details_announced_without_pdf():

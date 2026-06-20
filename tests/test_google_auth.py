@@ -11,7 +11,7 @@ import google.oauth2.credentials as gcreds
 import google_auth_oauthlib.flow as gflow
 import googleapiclient.discovery as gdiscovery
 
-from connectors.gmail import CALENDAR_EVENTS, GMAIL_READONLY, get_google_service
+from connectors.google_auth import CALENDAR_EVENTS, GMAIL_READONLY, get_google_service
 
 
 class _FakeCreds:
